@@ -14,44 +14,49 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
+const display =
+  "Quicksand,'Trebuchet MS','Segoe UI',Helvetica,Arial,sans-serif";
+const sans = "'Segoe UI',Helvetica,Arial,sans-serif";
+
 function card(title: string, body: string, href: string, label: string) {
   const safeHref = escapeHtml(href);
   return `<!DOCTYPE html>
 <html lang="en">
-<body style="margin:0;padding:0;background:#0B0C0B;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0B0C0B;padding:40px 16px;">
+<head>
+  <meta charset="utf-8" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600&display=swap" rel="stylesheet" />
+</head>
+<body style="margin:0;padding:0;background:#E8EBE6;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#E8EBE6;padding:32px 16px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="420" cellpadding="0" cellspacing="0" style="max-width:420px;width:100%;background:#121412;border:1px solid #242824;border-radius:12px;">
+        <table role="presentation" width="420" cellpadding="0" cellspacing="0" style="max-width:420px;width:100%;background:#F7F8F5;border:1px solid #D4D8D2;border-radius:10px;">
           <tr>
-            <td style="padding:28px 28px 0;font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#C5CDC4;">
+            <td style="padding:28px 28px 0;font-family:${display};font-size:15px;font-weight:600;letter-spacing:0.04em;color:#3A423A;">
               Whootaloo
             </td>
           </tr>
           <tr>
-            <td style="padding:16px 28px 0;">
-              <div style="height:1px;background:#2A2E2A;line-height:1px;font-size:1px;">&nbsp;</div>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:22px 28px 0;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:1.3;color:#E6E6E2;">
+            <td style="padding:20px 28px 0;font-family:${display};font-size:22px;font-weight:600;line-height:1.3;color:#1A1E1A;">
               ${escapeHtml(title)}
             </td>
           </tr>
           <tr>
-            <td style="padding:12px 28px 0;font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:1.55;color:#8A908A;">
+            <td style="padding:12px 28px 0;font-family:${sans};font-size:15px;line-height:1.55;color:#5A625A;">
               ${escapeHtml(body)}
             </td>
           </tr>
           <tr>
             <td style="padding:24px 28px 0;">
-              <a href="${safeHref}" style="display:inline-block;padding:11px 16px;border:1px solid #3A3E3A;border-radius:8px;font-family:Georgia,'Times New Roman',serif;font-size:13px;letter-spacing:0.06em;color:#E6E6E2;text-decoration:none;">
+              <a href="${safeHref}" style="display:inline-block;padding:11px 16px;border:1px solid #3A423A;border-radius:8px;font-family:${sans};font-size:13px;color:#1A1E1A;text-decoration:none;">
                 ${escapeHtml(label)}
               </a>
             </td>
           </tr>
           <tr>
-            <td style="padding:22px 28px 28px;font-family:Georgia,'Times New Roman',serif;font-size:11px;line-height:1.5;color:#6A706A;word-break:break-all;">
+            <td style="padding:22px 28px 28px;font-family:${sans};font-size:11px;line-height:1.5;color:#7A827A;word-break:break-all;">
               If the button does not open, paste this into a browser:<br />${safeHref}
             </td>
           </tr>

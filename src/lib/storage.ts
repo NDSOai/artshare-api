@@ -1,17 +1,13 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "../env.js";
 
-const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUDIO_TYPES = new Set([
   "audio/mpeg",
   "audio/mp3",
   "audio/mp4",
   "audio/aac",
-  "audio/wav",
-  "audio/x-wav",
-  "audio/ogg",
-  "audio/webm",
-  "audio/flac",
+  "audio/x-m4a",
 ]);
 
 const LIMITS = {
@@ -90,13 +86,8 @@ export async function putBannerFile(userId: string, file: { type: string; bytes:
 function extFor(type: string, kind: string) {
   if (type === "image/png") return "png";
   if (type === "image/webp") return "webp";
-  if (type === "image/gif") return "gif";
   if (type.startsWith("audio/")) {
-    if (type.includes("wav")) return "wav";
-    if (type.includes("ogg")) return "ogg";
-    if (type.includes("webm")) return "webm";
-    if (type.includes("aac") || type.includes("mp4")) return "m4a";
-    if (type.includes("flac")) return "flac";
+    if (type.includes("aac") || type.includes("mp4") || type.includes("m4a")) return "m4a";
     return "mp3";
   }
   return kind === "music" ? "mp3" : "jpg";
@@ -104,16 +95,12 @@ function extFor(type: string, kind: string) {
 
 export function assertUpload(file: File, kind: string) {
   if (kind === "image") {
-    if (!IMAGE_TYPES.has(file.type) && !file.type.startsWith("image/")) {
-      return "That photo type is not supported.";
-    }
+    if (!IMAGE_TYPES.has(file.type)) return "Use JPEG, PNG, or WebP, under 3MB.";
     if (file.size > LIMITS.image) return "Photos must be under 3MB.";
     return null;
   }
   if (kind === "music") {
-    if (!AUDIO_TYPES.has(file.type) && !file.type.startsWith("audio/")) {
-      return "That audio type is not supported.";
-    }
+    if (!AUDIO_TYPES.has(file.type)) return "Use MP3 or AAC, under 20MB.";
     if (file.size > LIMITS.music) return "Songs must be under 20MB.";
     return null;
   }

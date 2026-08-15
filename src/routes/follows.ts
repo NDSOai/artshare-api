@@ -10,6 +10,14 @@ async function findUser(handle: string) {
   return user ?? null;
 }
 
+export async function isFollowing(followerId: string, followeeId: string) {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from follows
+    where follower_id = ${followerId} and followee_id = ${followeeId}
+  `;
+  return row.n > 0;
+}
+
 export async function areMutual(a: string, b: string) {
   const [row] = await sql<{ ok: boolean }[]>`
     select (
@@ -42,17 +50,20 @@ followRoutes.post("/:handle", requireAuth, async (c) => {
   const them = await findUser(c.req.param("handle"));
   if (!them) return c.json({ error: "Artist not found." }, 404);
   if (them.id === me.id) return c.json({ error: "You cannot follow yourself." }, 400);
-  await sql`
+  const inserted = await sql<{ follower_id: string }[]>`
     insert into follows (follower_id, followee_id)
     values (${me.id}, ${them.id})
     on conflict do nothing
+    returning follower_id
   `;
-  await notify({
-    userId: them.id,
-    fromId: me.id,
-    type: "follow",
-    text: "followed you",
-  });
+  if (inserted[0]) {
+    await notify({
+      userId: them.id,
+      fromId: me.id,
+      type: "follow",
+      text: "followed you",
+    });
+  }
   return c.json({ following: true, mutual: await areMutual(me.id, them.id) });
 });
 

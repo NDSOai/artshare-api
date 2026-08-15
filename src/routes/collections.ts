@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { notify } from "../lib/notify.js";
 import { newId } from "../lib/tokens.js";
 
 export const collectionRoutes = new Hono<{ Variables: Authed }>();
@@ -71,12 +72,24 @@ collectionRoutes.post("/:id/works", async (c) => {
   if (!col) return c.json({ error: "Collection not found." }, 404);
   const body = await c.req.json<{ workId?: string }>();
   const workId = body.workId || "";
-  const [work] = await sql`select id from works where id = ${workId} limit 1`;
+  const [work] = await sql<{ id: string; artist_id: string; title: string }[]>`
+    select id, artist_id, title from works where id = ${workId} limit 1
+  `;
   if (!work) return c.json({ error: "Work not found." }, 404);
-  await sql`
+  const inserted = await sql<{ work_id: string }[]>`
     insert into collection_works (collection_id, work_id)
     values (${col.id}, ${workId})
     on conflict do nothing
+    returning work_id
   `;
+  if (inserted[0]) {
+    await notify({
+      userId: work.artist_id,
+      fromId: me.id,
+      workId: work.id,
+      type: "collect",
+      text: `added ${work.title} to a collection`,
+    });
+  }
   return c.json({ saved: true });
 });

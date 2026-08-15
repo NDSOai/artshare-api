@@ -28,6 +28,8 @@ alter table users add column if not exists mediums jsonb not null default '[]'::
 alter table users add column if not exists favorite_handles jsonb not null default '[]'::jsonb;
 alter table users add column if not exists pinned_work_ids jsonb not null default '[]'::jsonb;
 alter table users add column if not exists banner_url text;
+alter table users add column if not exists stripe_color text not null default '#3A4A32';
+alter table users add column if not exists social_links jsonb not null default '[]'::jsonb;
 
 create table if not exists works (
   id text primary key,
@@ -47,6 +49,7 @@ create table if not exists works (
 alter table works add column if not exists kind text not null default 'image';
 alter table works add column if not exists license text not null default 'All Rights Reserved';
 alter table works add column if not exists body text;
+alter table works add column if not exists cover_url text;
 
 create table if not exists comments (
   id text primary key,
@@ -99,6 +102,10 @@ create table if not exists collection_works (
   primary key (collection_id, work_id)
 );
 
+alter table collection_works add column if not exists created_at timestamptz not null default now();
+alter table likes add column if not exists created_at timestamptz not null default now();
+alter table reposts add column if not exists created_at timestamptz not null default now();
+
 create table if not exists notifications (
   id text primary key,
   user_id text not null references users(id) on delete cascade,
@@ -111,3 +118,10 @@ create table if not exists notifications (
 );
 
 create index if not exists notifications_user_idx on notifications (user_id, created_at desc);
+
+create table if not exists reposts (
+  user_id text not null references users(id) on delete cascade,
+  work_id text not null references works(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, work_id)
+);

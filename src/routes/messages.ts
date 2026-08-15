@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { sql, type UserRow } from "../db.js";
 import { decryptBody, encryptBody } from "../lib/crypto-message.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { notify } from "../lib/notify.js";
 import { newId } from "../lib/tokens.js";
 import { areMutual } from "./follows.js";
 
@@ -94,5 +95,11 @@ messageRoutes.post("/:handle", async (c) => {
     values (${newId("msg")}, ${me.id}, ${them.id}, ${encryptBody(text)})
     returning *, ${me.handle} as sender_handle
   `;
+  await notify({
+    userId: them.id,
+    fromId: me.id,
+    type: "message",
+    text: "sent you a message",
+  });
   return c.json({ message: open(row) }, 201);
 });

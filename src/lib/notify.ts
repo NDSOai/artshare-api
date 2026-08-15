@@ -5,7 +5,7 @@ export async function notify(input: {
   userId: string;
   fromId?: string | null;
   workId?: string | null;
-  type: "like" | "comment" | "follow";
+  type: "like" | "comment" | "follow" | "repost" | "message" | "collect";
   text: string;
 }) {
   if (input.fromId && input.fromId === input.userId) return;
