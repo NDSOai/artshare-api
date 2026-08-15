@@ -39,8 +39,9 @@ authRoutes.post("/signup", async (c) => {
   const confirmationUrl = `${env.frontendUrl}/confirm-email?token=${token}`;
   try {
     await sendConfirmationEmail(email, confirmationUrl);
+    console.log(`[signup] confirmation email sent to ${email}`);
   } catch (err) {
-    console.error(err);
+    console.error(`[signup] failed to send confirmation email to ${email}:`, err);
   }
 
   return c.json(
@@ -106,8 +107,9 @@ authRoutes.post("/forgot-password", async (c) => {
     `;
     try {
       await sendPasswordResetEmail(clean, `${env.frontendUrl}/reset-password?token=${token}`);
+      console.log(`[forgot-password] reset email sent to ${clean}`);
     } catch (err) {
-      console.error(err);
+      console.error(`[forgot-password] failed to send reset email to ${clean}:`, err);
     }
   }
   return c.json({ message: "If that email exists, a reset link has been sent." });
@@ -135,3 +137,4 @@ authRoutes.post("/reset-password", async (c) => {
   `;
   return c.json({ message: "Password reset successful!" });
 });
+
