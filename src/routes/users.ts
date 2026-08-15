@@ -67,6 +67,12 @@ async function resolveBanner(userId: string, current: string | null, incoming?: 
   return current;
 }
 
+userRoutes.delete("/me", requireAuth, async (c) => {
+  const current = c.get("user");
+  await sql`delete from users where id = ${current.id}`;
+  return c.json({ message: "Account deleted." });
+});
+
 userRoutes.patch("/me", requireAuth, async (c) => {
   const current = c.get("user");
   try {
