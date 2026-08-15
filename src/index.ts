@@ -9,6 +9,8 @@ import { commentRoutes } from "./routes/comments.js";
 import { followRoutes } from "./routes/follows.js";
 import { messageRoutes } from "./routes/messages.js";
 import { userRoutes } from "./routes/users.js";
+import { isStorageReady } from "./lib/storage.js";
+import { mediaRoutes } from "./routes/media.js";
 import { workRoutes } from "./routes/works.js";
 
 const app = new Hono();
@@ -23,7 +25,9 @@ app.use(
   }),
 );
 
-app.get("/health", (c) => c.json({ ok: true, service: "artshare-api" }));
+app.get("/health", (c) => c.json({ ok: true, service: "artshare-api", storage: isStorageReady() }));
+
+app.route("/media", mediaRoutes);
 
 app.route("/auth", authRoutes);
 app.route("/users", userRoutes);

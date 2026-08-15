@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { assertUpload, isStorageReady, putWorkFile } from "../lib/storage.js";
 import { newId } from "../lib/tokens.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
@@ -42,6 +43,7 @@ workRoutes.post("/", requireAuth, async (c) => {
   let license = "All Rights Reserved";
   let bodyText = "";
   let tools: string[] = [];
+  let file: File | null = null;
 
   if (contentType.includes("multipart/form-data")) {
     const form = await c.req.formData();
@@ -63,6 +65,8 @@ workRoutes.post("/", requireAuth, async (c) => {
         tools = rawTools.split(",").map((t) => t.trim()).filter(Boolean);
       }
     }
+    const uploaded = form.get("file");
+    if (uploaded instanceof File && uploaded.size > 0) file = uploaded;
   } else {
     const body = await c.req.json<{
       title?: string;
@@ -88,13 +92,30 @@ workRoutes.post("/", requireAuth, async (c) => {
     if (Array.isArray(body.tools)) tools = body.tools.map(String);
   }
 
+  const workId = newId("work");
+  if (file) {
+    if (!isStorageReady()) {
+      return c.json({ error: "File storage is not ready yet. Add a Railway Bucket to artshare-api." }, 503);
+    }
+    const problem = assertUpload(file, kind);
+    if (problem) return c.json({ error: problem }, 400);
+    try {
+      mediaUrl = await putWorkFile(user.id, workId, file, kind);
+    } catch (err) {
+      console.error(err);
+      return c.json({ error: "Could not store that file." }, 500);
+    }
+  } else if ((kind === "image" || kind === "music") && !mediaUrl) {
+    return c.json({ error: kind === "music" ? "Add the song before you publish." : "Add a photo before you publish." }, 400);
+  }
+
   const [work] = await sql<WorkRow[]>`
     insert into works (
       id, artist_id, title, medium, description, media_url, color, remixable,
       download_permitted, tools, kind, license, body
     )
     values (
-      ${newId("work")}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
+      ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
       ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
       ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null}
     )

@@ -21,6 +21,12 @@ export const env = {
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
   resendApiKey: process.env.RESEND_API_KEY || "",
   resendFrom: process.env.RESEND_FROM || "onboarding@resend.dev",
-  bucketEndpoint: process.env.BUCKET_ENDPOINT || "",
-  bucketName: process.env.BUCKET_NAME || "",
+  bucketEndpoint: process.env.BUCKET_ENDPOINT || process.env.ENDPOINT || "",
+  bucketName: process.env.BUCKET_NAME || process.env.BUCKET || "",
+  bucketAccessKey: process.env.BUCKET_ACCESS_KEY_ID || process.env.ACCESS_KEY_ID || "",
+  bucketSecretKey: process.env.BUCKET_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY || "",
+  bucketRegion: process.env.BUCKET_REGION || process.env.REGION || "auto",
+  apiPublicUrl:
+    process.env.API_PUBLIC_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : ""),
 };

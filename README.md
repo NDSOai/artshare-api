@@ -25,6 +25,12 @@ Needs Postgres. Railway can provide `DATABASE_URL`.
 | `FRONTEND_URL` | yes in prod | Confirm / reset links, CORS |
 | `RESEND_API_KEY` | for mail | Without it, links log to stdout |
 | `RESEND_FROM` | no | Defaults to Resend onboarding sender |
+| `BUCKET_ENDPOINT` | for files | Railway Bucket `ENDPOINT` |
+| `BUCKET_NAME` | for files | Railway Bucket `BUCKET` |
+| `BUCKET_ACCESS_KEY_ID` | for files | Railway Bucket `ACCESS_KEY_ID` |
+| `BUCKET_SECRET_ACCESS_KEY` | for files | Railway Bucket `SECRET_ACCESS_KEY` |
+| `BUCKET_REGION` | no | Defaults to `auto` |
+| `API_PUBLIC_URL` | for files | Public API origin, used in media URLs |
 | `PORT` | no | Railway sets this |
 
 ## Routes
@@ -42,6 +48,7 @@ Matches `lib/api.ts` on the frontend.
 | GET | `/users/:handle` |
 | PATCH | `/users/me` |
 | GET/POST | `/works` |
+| GET | `/media/*` |
 | GET | `/works/:id` |
 | GET/POST | `/works/:id/comments` |
 | GET/POST/DELETE | `/follows/:handle` |

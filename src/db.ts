@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { env } from "./env.js";
+import { publicMediaUrl } from "./lib/storage.js";
 
 export const sql = postgres(env.databaseUrl, { max: 8 });
 
@@ -100,7 +101,7 @@ export function publicWork(work: WorkRow) {
     tools: work.tools ?? [],
     description: work.description ?? undefined,
     downloadPermitted: work.download_permitted,
-    mediaUrl: work.media_url ?? undefined,
+    mediaUrl: publicMediaUrl(work.media_url),
     kind: work.kind ?? "image",
     license: work.license ?? "All Rights Reserved",
     body: work.body ?? undefined,
