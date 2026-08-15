@@ -22,6 +22,12 @@ create table if not exists users (
 create unique index if not exists users_handle_lower on users (lower(handle));
 create unique index if not exists users_email_lower on users (lower(email));
 
+alter table users add column if not exists bio text not null default '';
+alter table users add column if not exists photo_url text;
+alter table users add column if not exists mediums jsonb not null default '[]'::jsonb;
+alter table users add column if not exists favorite_handles jsonb not null default '[]'::jsonb;
+alter table users add column if not exists pinned_work_ids jsonb not null default '[]'::jsonb;
+
 create table if not exists works (
   id text primary key,
   artist_id text not null references users(id) on delete cascade,

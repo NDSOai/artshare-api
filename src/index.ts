@@ -27,6 +27,11 @@ app.use(
 
 app.get("/health", (c) => c.json({ ok: true, service: "artshare-api", storage: isStorageReady() }));
 
+app.onError((err, c) => {
+  console.error(err);
+  return c.json({ error: "Something went wrong on our side. Try again in a moment." }, 500);
+});
+
 app.route("/media", mediaRoutes);
 
 app.route("/auth", authRoutes);
