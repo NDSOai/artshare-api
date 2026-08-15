@@ -14,6 +14,7 @@ import { mediaRoutes } from "./routes/media.js";
 import { workRoutes } from "./routes/works.js";
 import { collectionRoutes } from "./routes/collections.js";
 import { notificationRoutes } from "./routes/notifications.js";
+import { adminRoutes } from "./routes/admin.js";
 
 const app = new Hono();
 
@@ -34,6 +35,7 @@ app.onError((err, c) => {
   return c.json({ error: "Something went wrong on our side. Try again in a moment." }, 500);
 });
 
+app.route("/admin", adminRoutes);
 app.route("/media", mediaRoutes);
 
 app.route("/auth", authRoutes);
@@ -52,3 +54,4 @@ await migrate();
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.log(`artshare-api listening on ${info.port}`);
 });
+
