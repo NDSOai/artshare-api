@@ -25,17 +25,23 @@ export async function sendConfirmationEmail(email: string, confirmationUrl: stri
     console.log(`[email] confirm ${email} ${confirmationUrl}`);
     return;
   }
-  await resend.emails.send({
-    from: env.resendFrom,
-    to: email,
-    subject: "Confirm your Whootaloo email",
-    html: wrap(
-      "Confirm your email",
-      "Welcome to Whootaloo. Click the link below to verify your email address.",
-      confirmationUrl,
-      "Confirm Email",
-    ),
-  });
+  try {
+    const result = await resend.emails.send({
+      from: env.resendFrom,
+      to: email,
+      subject: "Confirm your Whootaloo email",
+      html: wrap(
+        "Confirm your email",
+        "Welcome to Whootaloo. Click the link below to verify your email address.",
+        confirmationUrl,
+        "Confirm Email",
+      ),
+    });
+    console.log(`[email] confirmation sent to ${email}:`, result);
+  } catch (err) {
+    console.error(`[email] confirmation failed for ${email}:`, err);
+    throw err;
+  }
 }
 
 export async function sendPasswordResetEmail(email: string, resetUrl: string) {
@@ -44,15 +50,22 @@ export async function sendPasswordResetEmail(email: string, resetUrl: string) {
     console.log(`[email] reset ${email} ${resetUrl}`);
     return;
   }
-  await resend.emails.send({
-    from: env.resendFrom,
-    to: email,
-    subject: "Reset your Whootaloo password",
-    html: wrap(
-      "Reset your password",
-      "We received a request to reset your password. This link is valid for 15 minutes.",
-      resetUrl,
-      "Reset Password",
-    ),
-  });
+  try {
+    const result = await resend.emails.send({
+      from: env.resendFrom,
+      to: email,
+      subject: "Reset your Whootaloo password",
+      html: wrap(
+        "Reset your password",
+        "We received a request to reset your password. This link is valid for 15 minutes.",
+        resetUrl,
+        "Reset Password",
+      ),
+    });
+    console.log(`[email] reset sent to ${email}:`, result);
+  } catch (err) {
+    console.error(`[email] reset failed for ${email}:`, err);
+    throw err;
+  }
 }
+
