@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { publicArtist, publicUser, publicWork, sql, veilAbout, type UserRow, type WorkRow } from "../db.js";
+import { clampBannerPosition, publicArtist, publicUser, publicWork, sql, veilAbout, type UserRow, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { isFollowing } from "./follows.js";
 import { isStorageReady, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
@@ -121,6 +121,7 @@ userRoutes.patch("/me", requireAuth, async (c) => {
       bio?: string;
       photoUrl?: string;
       bannerUrl?: string;
+      bannerPosition?: number;
       stripeColor?: string;
       mediums?: string[];
       favoriteHandles?: string[];
@@ -136,6 +137,9 @@ userRoutes.patch("/me", requireAuth, async (c) => {
     const socialLinks = asSocialLinks(body.socialLinks ?? current.social_links);
     const photoUrl = await resolvePhoto(current.id, current.photo_url, body.photoUrl);
     const bannerUrl = await resolveBanner(current.id, current.banner_url, body.bannerUrl);
+    const bannerPosition = bannerUrl
+      ? clampBannerPosition(body.bannerPosition ?? current.banner_position)
+      : 50;
     const incomingStripe = typeof body.stripeColor === "string" ? body.stripeColor.trim() : "";
     const stripeColor = /^#[0-9a-fA-F]{6}$/.test(incomingStripe)
       ? incomingStripe.toUpperCase()
@@ -147,6 +151,7 @@ userRoutes.patch("/me", requireAuth, async (c) => {
         bio = ${bio},
         photo_url = ${photoUrl},
         banner_url = ${bannerUrl},
+        banner_position = ${bannerPosition},
         stripe_color = ${stripeColor},
         mediums = ${sql.json(mediums)},
         favorite_handles = ${sql.json(favoriteHandles)},

@@ -30,6 +30,7 @@ alter table users add column if not exists pinned_work_ids jsonb not null defaul
 alter table users add column if not exists banner_url text;
 alter table users add column if not exists stripe_color text not null default '#3A4A32';
 alter table users add column if not exists social_links jsonb not null default '[]'::jsonb;
+alter table users add column if not exists banner_position smallint not null default 50;
 
 create table if not exists works (
   id text primary key,

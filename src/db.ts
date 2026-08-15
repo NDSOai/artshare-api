@@ -21,6 +21,7 @@ export type UserRow = {
   bio: string;
   photo_url: string | null;
   banner_url: string | null;
+  banner_position?: number | null;
   stripe_color: string | null;
   verified: boolean;
   email_verified_at: Date | null;
@@ -56,6 +57,12 @@ export type WorkRow = {
   artist_verified?: boolean;
 };
 
+export function clampBannerPosition(value: unknown, fallback = 50) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.round(Math.min(100, Math.max(0, n)));
+}
+
 export function publicUser(user: UserRow) {
   return {
     id: user.id,
@@ -65,6 +72,7 @@ export function publicUser(user: UserRow) {
     bio: user.bio,
     photoUrl: publicMediaUrl(user.photo_url),
     bannerUrl: publicMediaUrl(user.banner_url),
+    bannerPosition: clampBannerPosition(user.banner_position),
     stripeColor: user.stripe_color || "#3A4A32",
     verified: user.verified,
     mediums: user.mediums ?? [],
@@ -123,6 +131,7 @@ export function publicArtist(user: UserRow) {
     stripeColor: user.stripe_color || "#3A4A32",
     photoUrl: publicMediaUrl(user.photo_url),
     bannerUrl: publicMediaUrl(user.banner_url),
+    bannerPosition: clampBannerPosition(user.banner_position),
     mediums: user.mediums ?? [],
     favoriteHandles: user.favorite_handles ?? [],
     pinnedWorkIds: user.pinned_work_ids ?? [],
