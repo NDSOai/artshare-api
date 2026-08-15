@@ -38,6 +38,10 @@ workRoutes.post("/", requireAuth, async (c) => {
   let mediaUrl = "";
   let color = "#121612";
   let remixable = false;
+  let kind = "image";
+  let license = "All Rights Reserved";
+  let bodyText = "";
+  let tools: string[] = [];
 
   if (contentType.includes("multipart/form-data")) {
     const form = await c.req.formData();
@@ -47,6 +51,18 @@ workRoutes.post("/", requireAuth, async (c) => {
     mediaUrl = String(form.get("mediaUrl") || form.get("url") || "");
     color = String(form.get("color") || color);
     remixable = String(form.get("remixable")) === "true";
+    kind = String(form.get("kind") || kind);
+    license = String(form.get("license") || license);
+    bodyText = String(form.get("body") || "");
+    const rawTools = form.get("tools");
+    if (typeof rawTools === "string" && rawTools) {
+      try {
+        const parsed = JSON.parse(rawTools);
+        if (Array.isArray(parsed)) tools = parsed.map(String);
+      } catch {
+        tools = rawTools.split(",").map((t) => t.trim()).filter(Boolean);
+      }
+    }
   } else {
     const body = await c.req.json<{
       title?: string;
@@ -55,6 +71,10 @@ workRoutes.post("/", requireAuth, async (c) => {
       mediaUrl?: string;
       color?: string;
       remixable?: boolean;
+      kind?: string;
+      license?: string;
+      body?: string;
+      tools?: string[];
     }>();
     title = body.title || title;
     medium = body.medium || medium;
@@ -62,13 +82,21 @@ workRoutes.post("/", requireAuth, async (c) => {
     mediaUrl = body.mediaUrl || "";
     color = body.color || color;
     remixable = Boolean(body.remixable);
+    kind = body.kind || kind;
+    license = body.license || license;
+    bodyText = body.body || "";
+    if (Array.isArray(body.tools)) tools = body.tools.map(String);
   }
 
   const [work] = await sql<WorkRow[]>`
-    insert into works (id, artist_id, title, medium, description, media_url, color, remixable, download_permitted)
+    insert into works (
+      id, artist_id, title, medium, description, media_url, color, remixable,
+      download_permitted, tools, kind, license, body
+    )
     values (
       ${newId("work")}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
-      ${mediaUrl || null}, ${color}, ${remixable}, ${remixable}
+      ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
+      ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null}
     )
     returning *
   `;

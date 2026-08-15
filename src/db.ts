@@ -42,6 +42,9 @@ export type WorkRow = {
   download_permitted: boolean;
   views: number;
   tools: string[];
+  kind?: string;
+  license?: string;
+  body?: string | null;
   created_at: Date;
   artist_name?: string;
   artist_handle?: string;
@@ -98,5 +101,8 @@ export function publicWork(work: WorkRow) {
     description: work.description ?? undefined,
     downloadPermitted: work.download_permitted,
     mediaUrl: work.media_url ?? undefined,
+    kind: work.kind ?? "image",
+    license: work.license ?? "All Rights Reserved",
+    body: work.body ?? undefined,
   };
 }

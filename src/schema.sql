@@ -37,6 +37,10 @@ create table if not exists works (
   created_at timestamptz not null default now()
 );
 
+alter table works add column if not exists kind text not null default 'image';
+alter table works add column if not exists license text not null default 'All Rights Reserved';
+alter table works add column if not exists body text;
+
 create table if not exists comments (
   id text primary key,
   work_id text not null references works(id) on delete cascade,
