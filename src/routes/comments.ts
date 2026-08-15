@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { sql } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { notify } from "../lib/notify.js";
 import { newId } from "../lib/tokens.js";
 
 export const commentRoutes = new Hono<{ Variables: Authed }>();
@@ -29,7 +30,9 @@ commentRoutes.get("/:workId/comments", async (c) => {
 commentRoutes.post("/:workId/comments", requireAuth, async (c) => {
   const user = c.get("user");
   const workId = c.req.param("workId");
-  const [work] = await sql`select id from works where id = ${workId} limit 1`;
+  const [work] = await sql<{ id: string; artist_id: string; title: string }[]>`
+    select id, artist_id, title from works where id = ${workId} limit 1
+  `;
   if (!work) return c.json({ error: "Work not found." }, 404);
   const body = await c.req.json<{ text?: string; pinnedTo?: { x: number; y: number } | null }>();
   const text = (body.text || "").trim();
@@ -45,6 +48,14 @@ commentRoutes.post("/:workId/comments", requireAuth, async (c) => {
     )
     returning id, text, pin_x, pin_y, created_at
   `;
+
+  await notify({
+    userId: work.artist_id,
+    fromId: user.id,
+    workId: work.id,
+    type: "comment",
+    text: `commented on ${work.title}`,
+  });
 
   return c.json(
     {

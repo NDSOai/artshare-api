@@ -1,9 +1,22 @@
 import { Hono } from "hono";
 import { publicArtist, publicUser, publicWork, sql, type UserRow, type WorkRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
-import { isStorageReady, parseDataUrl, putAvatarFile } from "../lib/storage.js";
+import { isStorageReady, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
+
+userRoutes.get("/", async (c) => {
+  const q = (c.req.query("q") || "").trim();
+  if (q.length < 2) return c.json({ users: [] });
+  const like = `%${q}%`;
+  const users = await sql<UserRow[]>`
+    select * from users
+    where handle ilike ${like} or name ilike ${like}
+    order by created_at desc
+    limit 20
+  `;
+  return c.json({ users: users.map(publicArtist) });
+});
 
 function asStringList(value: unknown, max: number) {
   if (!Array.isArray(value)) return [];
@@ -23,7 +36,31 @@ async function resolvePhoto(userId: string, current: string | null, incoming?: s
     incoming.startsWith("http://") ||
     incoming.startsWith("https://") ||
     incoming.startsWith("/media/") ||
-    incoming.startsWith("avatars/")
+    incoming.startsWith("avatars/") ||
+    incoming.startsWith("banners/") ||
+    incoming.startsWith("works/")
+  ) {
+    return incoming;
+  }
+  return current;
+}
+
+async function resolveBanner(userId: string, current: string | null, incoming?: string) {
+  if (incoming === undefined) return current;
+  if (!incoming) return null;
+  if (incoming.startsWith("data:")) {
+    const parsed = parseDataUrl(incoming);
+    if (!parsed) throw new Error("That photo could not be used.");
+    if (!isStorageReady()) return current;
+    return putBannerFile(userId, parsed);
+  }
+  if (
+    incoming.startsWith("http://") ||
+    incoming.startsWith("https://") ||
+    incoming.startsWith("/media/") ||
+    incoming.startsWith("avatars/") ||
+    incoming.startsWith("banners/") ||
+    incoming.startsWith("works/")
   ) {
     return incoming;
   }
@@ -37,6 +74,7 @@ userRoutes.patch("/me", requireAuth, async (c) => {
       name?: string;
       bio?: string;
       photoUrl?: string;
+      bannerUrl?: string;
       mediums?: string[];
       favoriteHandles?: string[];
       pinnedWorkIds?: string[];
@@ -48,12 +86,14 @@ userRoutes.patch("/me", requireAuth, async (c) => {
     const favoriteHandles = asStringList(body.favoriteHandles ?? current.favorite_handles, 5);
     const pinnedWorkIds = asStringList(body.pinnedWorkIds ?? current.pinned_work_ids, 3);
     const photoUrl = await resolvePhoto(current.id, current.photo_url, body.photoUrl);
+    const bannerUrl = await resolveBanner(current.id, current.banner_url, body.bannerUrl);
 
     const [user] = await sql<UserRow[]>`
       update users set
         name = ${name},
         bio = ${bio},
         photo_url = ${photoUrl},
+        banner_url = ${bannerUrl},
         mediums = ${sql.json(mediums)},
         favorite_handles = ${sql.json(favoriteHandles)},
         pinned_work_ids = ${sql.json(pinnedWorkIds)}

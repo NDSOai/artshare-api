@@ -1,20 +1,78 @@
 import { Hono } from "hono";
 import { publicWork, sql, type WorkRow } from "../db.js";
-import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
+import { notify } from "../lib/notify.js";
 import { assertUpload, isStorageReady, putWorkFile } from "../lib/storage.js";
 import { newId } from "../lib/tokens.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
 
 workRoutes.get("/", async (c) => {
+  const q = (c.req.query("q") || "").trim();
+  const medium = (c.req.query("medium") || "").trim();
+  const following = c.req.query("following") === "1";
+  const me = following ? await readUserFromRequest(c) : null;
+  if (following && !me) return c.json({ works: [] });
+
+  const like = q ? `%${q}%` : null;
   const works = await sql<WorkRow[]>`
     select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
     from works w
     join users u on u.id = w.artist_id
+    where (${like}::text is null or w.title ilike ${like} or u.name ilike ${like} or u.handle ilike ${like} or w.medium ilike ${like})
+      and (${medium} = '' or lower(replace(w.medium, ' ', '-')) = ${medium.toLowerCase()})
+      and (
+        ${!following} or w.artist_id in (
+          select followee_id from follows where follower_id = ${me?.id ?? ""}
+        )
+      )
     order by w.created_at desc
     limit 100
   `;
   return c.json({ works: works.map(publicWork) });
+});
+
+workRoutes.post("/:id/like", requireAuth, async (c) => {
+  const user = c.get("user");
+  const workId = c.req.param("id");
+  const [work] = await sql<{ id: string; artist_id: string; title: string }[]>`
+    select id, artist_id, title from works where id = ${workId} limit 1
+  `;
+  if (!work) return c.json({ error: "Work not found." }, 404);
+  const inserted = await sql<{ user_id: string }[]>`
+    insert into likes (user_id, work_id) values (${user.id}, ${work.id})
+    on conflict do nothing
+    returning user_id
+  `;
+  if (inserted[0]) {
+    await notify({
+      userId: work.artist_id,
+      fromId: user.id,
+      workId: work.id,
+      type: "like",
+      text: `liked ${work.title}`,
+    });
+  }
+  const [count] = await sql<{ n: number }[]>`select count(*)::int as n from likes where work_id = ${work.id}`;
+  return c.json({ liked: true, count: count.n });
+});
+
+workRoutes.delete("/:id/like", requireAuth, async (c) => {
+  const user = c.get("user");
+  const workId = c.req.param("id");
+  await sql`delete from likes where user_id = ${user.id} and work_id = ${workId}`;
+  const [count] = await sql<{ n: number }[]>`select count(*)::int as n from likes where work_id = ${workId}`;
+  return c.json({ liked: false, count: count.n });
+});
+
+workRoutes.get("/:id/like", requireAuth, async (c) => {
+  const user = c.get("user");
+  const workId = c.req.param("id");
+  const [mine] = await sql<{ n: number }[]>`
+    select count(*)::int as n from likes where user_id = ${user.id} and work_id = ${workId}
+  `;
+  const [count] = await sql<{ n: number }[]>`select count(*)::int as n from likes where work_id = ${workId}`;
+  return c.json({ liked: mine.n > 0, count: count.n });
 });
 
 workRoutes.get("/:id", async (c) => {

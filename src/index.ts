@@ -12,6 +12,8 @@ import { userRoutes } from "./routes/users.js";
 import { isStorageReady } from "./lib/storage.js";
 import { mediaRoutes } from "./routes/media.js";
 import { workRoutes } from "./routes/works.js";
+import { collectionRoutes } from "./routes/collections.js";
+import { notificationRoutes } from "./routes/notifications.js";
 
 const app = new Hono();
 
@@ -40,6 +42,8 @@ app.route("/works", commentRoutes);
 app.route("/works", workRoutes);
 app.route("/follows", followRoutes);
 app.route("/messages", messageRoutes);
+app.route("/collections", collectionRoutes);
+app.route("/notifications", notificationRoutes);
 
 app.notFound((c) => c.json({ error: "Not found." }, 404));
 

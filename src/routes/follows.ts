@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { sql, type UserRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { notify } from "../lib/notify.js";
 
 export const followRoutes = new Hono<{ Variables: Authed }>();
 
@@ -46,6 +47,12 @@ followRoutes.post("/:handle", requireAuth, async (c) => {
     values (${me.id}, ${them.id})
     on conflict do nothing
   `;
+  await notify({
+    userId: them.id,
+    fromId: me.id,
+    type: "follow",
+    text: "followed you",
+  });
   return c.json({ following: true, mutual: await areMutual(me.id, them.id) });
 });
 

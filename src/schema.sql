@@ -27,6 +27,7 @@ alter table users add column if not exists photo_url text;
 alter table users add column if not exists mediums jsonb not null default '[]'::jsonb;
 alter table users add column if not exists favorite_handles jsonb not null default '[]'::jsonb;
 alter table users add column if not exists pinned_work_ids jsonb not null default '[]'::jsonb;
+alter table users add column if not exists banner_url text;
 
 create table if not exists works (
   id text primary key,
@@ -75,3 +76,38 @@ create table if not exists messages (
 
 create index if not exists messages_pair_idx
   on messages (least(sender_id, recipient_id), greatest(sender_id, recipient_id), created_at);
+
+create table if not exists likes (
+  user_id text not null references users(id) on delete cascade,
+  work_id text not null references works(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, work_id)
+);
+
+create table if not exists collections (
+  id text primary key,
+  owner_id text not null references users(id) on delete cascade,
+  name text not null,
+  cover_color text not null default '#121612',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists collection_works (
+  collection_id text not null references collections(id) on delete cascade,
+  work_id text not null references works(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (collection_id, work_id)
+);
+
+create table if not exists notifications (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  type text not null,
+  from_id text references users(id) on delete set null,
+  work_id text references works(id) on delete set null,
+  text text not null,
+  read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists notifications_user_idx on notifications (user_id, created_at desc);

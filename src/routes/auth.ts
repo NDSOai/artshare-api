@@ -81,7 +81,7 @@ authRoutes.post("/confirm-email", async (c) => {
 
   const [next] = await sql<UserRow[]>`
     update users
-    set email_verified_at = now(), email_verification_token = null, verified = true
+    set email_verified_at = now(), email_verification_token = null
     where id = ${user.id}
     returning *
   `;
@@ -136,5 +136,24 @@ authRoutes.post("/reset-password", async (c) => {
     where id = ${user.id}
   `;
   return c.json({ message: "Password reset successful!" });
+});
+
+authRoutes.post("/resend-confirmation", async (c) => {
+  const { email } = await c.req.json<{ email?: string }>();
+  const clean = (email || "").trim().toLowerCase();
+  if (!clean) return c.json({ error: "Email is required." }, 400);
+  const [user] = await sql<UserRow[]>`select * from users where lower(email) = ${clean} limit 1`;
+  if (user && !user.email_verified_at) {
+    const token = user.email_verification_token || generateToken();
+    if (!user.email_verification_token) {
+      await sql`update users set email_verification_token = ${token} where id = ${user.id}`;
+    }
+    try {
+      await sendConfirmationEmail(clean, `${env.frontendUrl}/confirm-email?token=${token}`);
+    } catch (err) {
+      console.error(`[resend-confirmation] failed for ${clean}:`, err);
+    }
+  }
+  return c.json({ message: "If that account still needs confirming, a new email is on its way." });
 });
 

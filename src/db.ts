@@ -20,6 +20,7 @@ export type UserRow = {
   password_hash: string;
   bio: string;
   photo_url: string | null;
+  banner_url: string | null;
   verified: boolean;
   email_verified_at: Date | null;
   email_verification_token: string | null;
@@ -60,6 +61,7 @@ export function publicUser(user: UserRow) {
     email: user.email,
     bio: user.bio,
     photoUrl: publicMediaUrl(user.photo_url),
+    bannerUrl: publicMediaUrl(user.banner_url),
     verified: user.verified,
     mediums: user.mediums ?? [],
     favoriteHandles: user.favorite_handles ?? [],
@@ -79,6 +81,7 @@ export function publicArtist(user: UserRow) {
     socialLinks: [],
     bannerColor: "#121612",
     photoUrl: publicMediaUrl(user.photo_url),
+    bannerUrl: publicMediaUrl(user.banner_url),
     mediums: user.mediums ?? [],
     favoriteHandles: user.favorite_handles ?? [],
     pinnedWorkIds: user.pinned_work_ids ?? [],

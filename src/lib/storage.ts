@@ -43,7 +43,7 @@ export function publicMediaUrl(key: string | null | undefined) {
 }
 
 export function isSafeMediaKey(key: string) {
-  return /^(works|avatars)\/[a-zA-Z0-9._/-]+$/.test(key) && !key.includes("..");
+  return /^(works|avatars|banners)\/[a-zA-Z0-9._/-]+$/.test(key) && !key.includes("..");
 }
 
 export function parseDataUrl(dataUrl: string) {
@@ -51,7 +51,7 @@ export function parseDataUrl(dataUrl: string) {
   if (!match) return null;
   const type = match[1];
   const bytes = Buffer.from(match[2], "base64");
-  if (!type.startsWith("image/") || bytes.length === 0 || bytes.length > 500_000) return null;
+  if (!type.startsWith("image/") || bytes.length === 0 || bytes.length > 800_000) return null;
   return { type, bytes };
 }
 
@@ -60,6 +60,22 @@ export async function putAvatarFile(userId: string, file: { type: string; bytes:
   if (!s3) throw new Error("File storage is not ready yet.");
   const ext = file.type.includes("png") ? "png" : file.type.includes("webp") ? "webp" : "jpg";
   const key = `avatars/${userId}.${ext}`;
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: env.bucketName,
+      Key: key,
+      Body: file.bytes,
+      ContentType: file.type || "image/jpeg",
+    }),
+  );
+  return key;
+}
+
+export async function putBannerFile(userId: string, file: { type: string; bytes: Buffer }) {
+  const s3 = client();
+  if (!s3) throw new Error("File storage is not ready yet.");
+  const ext = file.type.includes("png") ? "png" : file.type.includes("webp") ? "webp" : "jpg";
+  const key = `banners/${userId}.${ext}`;
   await s3.send(
     new PutObjectCommand({
       Bucket: env.bucketName,
