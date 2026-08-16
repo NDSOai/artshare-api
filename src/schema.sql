@@ -32,6 +32,7 @@ alter table users add column if not exists stripe_color text not null default '#
 alter table users add column if not exists social_links jsonb not null default '[]'::jsonb;
 alter table users add column if not exists banner_position smallint not null default 50;
 alter table users add column if not exists moderation_on boolean not null default false;
+alter table users add column if not exists token_version integer not null default 0;
 
 create table if not exists works (
   id text primary key,

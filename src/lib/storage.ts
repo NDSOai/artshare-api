@@ -72,13 +72,54 @@ function guessType(name: string, kind?: string) {
 
 export function publicMediaUrl(key: string | null | undefined) {
   if (!key) return undefined;
-  if (key.startsWith("http://") || key.startsWith("https://")) return key;
-  const base = env.apiPublicUrl.replace(/\/$/, "");
-  return base ? `${base}/media/${key}` : `/media/${key}`;
+  const own = ownMediaKey(key);
+  if (own) {
+    const base = env.apiPublicUrl.replace(/\/$/, "");
+    return base ? `${base}/media/${own}` : `/media/${own}`;
+  }
+  return undefined;
 }
 
 export function isSafeMediaKey(key: string) {
   return /^(works|avatars|banners)\/[a-zA-Z0-9._/-]+$/.test(key) && !key.includes("..");
+}
+
+export function ownMediaKey(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (isSafeMediaKey(trimmed)) return trimmed;
+  if (trimmed.startsWith("/media/")) {
+    const key = trimmed.slice("/media/".length);
+    return isSafeMediaKey(key) ? key : null;
+  }
+  const base = env.apiPublicUrl.replace(/\/$/, "");
+  if (base && trimmed.startsWith(`${base}/media/`)) {
+    const key = trimmed.slice(`${base}/media/`.length);
+    return isSafeMediaKey(key) ? key : null;
+  }
+  return null;
+}
+
+function sniffImage(buf: Buffer) {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return "image/png";
+  }
+  if (
+    buf.length >= 12 &&
+    buf.toString("ascii", 0, 4) === "RIFF" &&
+    buf.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+function sniffAudio(buf: Buffer) {
+  if (buf.length >= 3 && buf.toString("ascii", 0, 3) === "ID3") return "audio/mpeg";
+  if (buf.length >= 2 && buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return "audio/mpeg";
+  if (buf.length >= 8 && buf.toString("ascii", 4, 8) === "ftyp") return "audio/mp4";
+  return null;
 }
 
 export function parseDataUrl(dataUrl: string) {
@@ -92,17 +133,21 @@ export function parseDataUrl(dataUrl: string) {
 
 export async function putAvatarFile(userId: string, file: { type: string; bytes: Buffer }) {
   if (!isStorageReady()) throw new Error("File storage is not ready yet.");
-  const ext = file.type.includes("png") ? "png" : file.type.includes("webp") ? "webp" : "jpg";
+  const sniffed = sniffImage(file.bytes);
+  if (!sniffed) throw new Error("That photo could not be used.");
+  const ext = sniffed === "image/png" ? "png" : sniffed === "image/webp" ? "webp" : "jpg";
   const key = `avatars/${userId}.${ext}`;
-  await putObject(key, file.bytes, file.type || "image/jpeg");
+  await putObject(key, file.bytes, sniffed);
   return key;
 }
 
 export async function putBannerFile(userId: string, file: { type: string; bytes: Buffer }) {
   if (!isStorageReady()) throw new Error("File storage is not ready yet.");
-  const ext = file.type.includes("png") ? "png" : file.type.includes("webp") ? "webp" : "jpg";
+  const sniffed = sniffImage(file.bytes);
+  if (!sniffed) throw new Error("That photo could not be used.");
+  const ext = sniffed === "image/png" ? "png" : sniffed === "image/webp" ? "webp" : "jpg";
   const key = `banners/${userId}.${ext}`;
-  await putObject(key, file.bytes, file.type || "image/jpeg");
+  await putObject(key, file.bytes, sniffed);
   return key;
 }
 
@@ -131,7 +176,7 @@ export function assertUpload(file: UploadBlob, kind: string) {
     return null;
   }
   if (kind === "music") {
-    if (!AUDIO_TYPES.has(type) && type !== "application/octet-stream") return "Use MP3 or AAC, under 20MB.";
+    if (!AUDIO_TYPES.has(type)) return "Use MP3 or AAC, under 20MB.";
     if (file.size > LIMITS.music) return "Songs must be under 20MB.";
     return null;
   }
@@ -140,10 +185,13 @@ export function assertUpload(file: UploadBlob, kind: string) {
 
 export async function putWorkFile(userId: string, workId: string, file: UploadBlob, kind: string) {
   if (!isStorageReady()) throw new Error("File storage is not ready yet.");
-  const type = file.type || guessType(file.name, kind);
-  const key = `works/${userId}/${workId}.${extFor(type, kind)}`;
   const body = Buffer.from(await file.arrayBuffer());
-  await putObject(key, body, type || (kind === "music" ? "audio/mpeg" : "image/jpeg"));
+  const sniffed = kind === "music" ? sniffAudio(body) : sniffImage(body);
+  if (!sniffed) {
+    throw new Error(kind === "music" ? "Use MP3 or AAC, under 20MB." : "Use JPEG, PNG, or WebP, under 3MB.");
+  }
+  const key = `works/${userId}/${workId}.${extFor(sniffed, kind)}`;
+  await putObject(key, body, sniffed);
   return key;
 }
 

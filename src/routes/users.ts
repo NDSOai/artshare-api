@@ -3,7 +3,7 @@ import { clampBannerPosition, publicArtist, publicUser, publicWork, sql, veilAbo
 import { isAdminEmail } from "../lib/admin.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { isFollowing } from "./follows.js";
-import { isStorageReady, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
+import { isStorageReady, ownMediaKey, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
@@ -77,16 +77,8 @@ async function resolvePhoto(userId: string, current: string | null, incoming?: s
     if (!isStorageReady()) return current;
     return putAvatarFile(userId, parsed);
   }
-  if (
-    incoming.startsWith("http://") ||
-    incoming.startsWith("https://") ||
-    incoming.startsWith("/media/") ||
-    incoming.startsWith("avatars/") ||
-    incoming.startsWith("banners/") ||
-    incoming.startsWith("works/")
-  ) {
-    return incoming;
-  }
+  const own = ownMediaKey(incoming);
+  if (own) return own;
   return current;
 }
 
@@ -99,16 +91,8 @@ async function resolveBanner(userId: string, current: string | null, incoming?: 
     if (!isStorageReady()) return current;
     return putBannerFile(userId, parsed);
   }
-  if (
-    incoming.startsWith("http://") ||
-    incoming.startsWith("https://") ||
-    incoming.startsWith("/media/") ||
-    incoming.startsWith("avatars/") ||
-    incoming.startsWith("banners/") ||
-    incoming.startsWith("works/")
-  ) {
-    return incoming;
-  }
+  const own = ownMediaKey(incoming);
+  if (own) return own;
   return current;
 }
 

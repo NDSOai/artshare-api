@@ -4,7 +4,7 @@ import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js
 import { notify } from "../lib/notify.js";
 import { assertCooldown, lastRepostAt, lastWorkAt, limited, repostsLastHour } from "../lib/rate-limit.js";
 import { parseMultipart, type FormFile } from "../lib/multipart.js";
-import { assertUpload, isStorageReady, putWorkFile } from "../lib/storage.js";
+import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
 import { newId } from "../lib/tokens.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
@@ -357,7 +357,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     title = String(form.fields.title || title);
     medium = String(form.fields.medium || medium);
     description = String(form.fields.description || "");
-    mediaUrl = String(form.fields.mediaUrl || form.fields.url || "");
+    mediaUrl = ownMediaKey(String(form.fields.mediaUrl || form.fields.url || "")) || "";
     color = String(form.fields.color || color);
     remixable = String(form.fields.remixable) === "true";
     kind = String(form.fields.kind || kind);
@@ -382,7 +382,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     title = body.title || title;
     medium = body.medium || medium;
     description = body.description || "";
-    mediaUrl = body.mediaUrl || "";
+    mediaUrl = ownMediaKey(body.mediaUrl || "") || "";
     color = body.color || color;
     remixable = Boolean(body.remixable);
     kind = body.kind || kind;
@@ -404,6 +404,8 @@ workRoutes.post("/", requireAuth, async (c) => {
       mediaUrl = await putWorkFile(user.id, workId, file, kind);
     } catch (err) {
       console.error(err);
+      const message = err instanceof Error ? err.message : "";
+      if (/JPEG|PNG|WebP|MP3|AAC/i.test(message)) return c.json({ error: message }, 400);
       return c.json({ error: "Could not store that file." }, 500);
     }
   } else if ((kind === "image" || kind === "music") && !mediaUrl) {
@@ -416,6 +418,8 @@ workRoutes.post("/", requireAuth, async (c) => {
       coverUrl = await putWorkFile(user.id, `${workId}-cover`, cover, "image");
     } catch (err) {
       console.error(err);
+      const message = err instanceof Error ? err.message : "";
+      if (/JPEG|PNG|WebP/i.test(message)) return c.json({ error: message }, 400);
       return c.json({ error: "Could not store that cover." }, 500);
     }
   }

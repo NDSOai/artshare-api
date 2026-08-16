@@ -35,6 +35,7 @@ export type UserRow = {
   pinned_work_ids: string[];
   social_links?: { id: string; url: string }[];
   moderation_on?: boolean;
+  token_version?: number;
   created_at: Date;
 };
 

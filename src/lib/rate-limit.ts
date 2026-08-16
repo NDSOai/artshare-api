@@ -4,8 +4,10 @@ import { sql } from "../db.js";
 const ipHits = new Map<string, number[]>();
 
 export function clientIp(c: Context) {
+  const real = c.req.header("x-real-ip") || c.req.header("cf-connecting-ip") || "";
+  if (real.trim()) return real.trim();
   const forwarded = c.req.header("x-forwarded-for") || "";
-  return forwarded.split(",")[0]?.trim() || c.req.header("cf-connecting-ip") || "unknown";
+  return forwarded.split(",")[0]?.trim() || "unknown";
 }
 
 export function waitMessage(waitMs: number, action: string) {

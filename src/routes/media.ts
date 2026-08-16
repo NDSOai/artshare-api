@@ -15,6 +15,7 @@ mediaRoutes.get("/*", async (c) => {
     return new Response(stream, {
       headers: {
         "Content-Type": obj.ContentType || "application/octet-stream",
+        "X-Content-Type-Options": "nosniff",
         "Cache-Control": "public, max-age=31536000, immutable",
       },
     });

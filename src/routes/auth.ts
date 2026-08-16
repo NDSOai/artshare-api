@@ -4,6 +4,7 @@ import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { sendConfirmationEmail, sendPasswordResetEmail } from "../lib/email.js";
 import { signToken } from "../lib/jwt.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
+import { passwordProblem } from "../lib/password-policy.js";
 import { generateToken, newId } from "../lib/tokens.js";
 import { env } from "../env.js";
 import { clientIp, hitIp, limited } from "../lib/rate-limit.js";
@@ -22,52 +23,69 @@ authRoutes.post("/signup", async (c) => {
   const name = (body.name || "").trim();
   const handle = cleanHandle(body.handle || "");
   const password = body.password || "";
+  const badPassword = passwordProblem(password);
 
-  if (!email || !name || !handle || password.length < 6) {
-    return c.json({ error: "Name, handle, email, and a password of at least 6 characters are required." }, 400);
+  if (!email || !name || !handle || badPassword) {
+    return c.json(
+      { error: badPassword || "Name, handle, email, and a password of at least 10 characters are required." },
+      400,
+    );
   }
 
-  const existing = await sql<UserRow[]>`
-    select * from users where lower(email) = ${email} or lower(handle) = ${handle} limit 1
+  const [takenHandle] = await sql<UserRow[]>`
+    select * from users where lower(handle) = ${handle} limit 1
   `;
-  if (existing[0]) return c.json({ error: "That email or handle is already taken." }, 409);
+  if (takenHandle) return c.json({ error: "That handle is already taken." }, 409);
+
+  const [takenEmail] = await sql<UserRow[]>`
+    select * from users where lower(email) = ${email} limit 1
+  `;
+  if (takenEmail) {
+    return c.json(
+      { message: "Signup successful! Check your email to confirm your account." },
+      201,
+    );
+  }
 
   const token = generateToken();
-  const [user] = await sql<UserRow[]>`
+  await sql`
     insert into users (id, handle, name, email, password_hash, email_verification_token)
     values (${newId("user")}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${token})
-    returning *
   `;
 
   const confirmationUrl = `${env.frontendUrl}/confirm-email?token=${token}`;
   try {
     await sendConfirmationEmail(email, confirmationUrl);
-    console.log(`[signup] confirmation email sent to ${email}`);
   } catch (err) {
-    console.error(`[signup] failed to send confirmation email to ${email}:`, err);
+    console.error("[signup] confirmation email failed", err);
   }
 
   return c.json(
     {
       message: "Signup successful! Check your email to confirm your account.",
-      user: { id: user.id, email: user.email, handle: user.handle, name: user.name },
     },
     201,
   );
 });
 
 authRoutes.post("/login", async (c) => {
+  const ip = clientIp(c);
+  const ipLimit = hitIp(`login-ip:${ip}`, 30, 15 * 60 * 1000, "try logging in");
+  if (ipLimit) return limited(c, ipLimit);
+
   const body = await c.req.json<{ email?: string; password?: string }>();
   const email = (body.email || "").trim().toLowerCase();
   const [user] = await sql<UserRow[]>`select * from users where lower(email) = ${email} limit 1`;
   if (!user || !(await verifyPassword(body.password || "", user.password_hash))) {
+    const failLimit = hitIp(`login-fail:${email || ip}`, 8, 15 * 60 * 1000, "try logging in");
+    if (failLimit) return limited(c, failLimit);
     return c.json({ error: "Could not log in." }, 401);
   }
   if (!user.email_verified_at) {
     return c.json({ error: "Confirm your email before logging in." }, 403);
   }
   return c.json({
-    token: await signToken(user.id, user.handle),
+    token: await signToken(user),
     user: publicUser(user),
   });
 });
@@ -91,7 +109,7 @@ authRoutes.post("/confirm-email", async (c) => {
 
   return c.json({
     message: "Email confirmed!",
-    token: await signToken(next.id, next.handle),
+    token: await signToken(next),
     user: publicUser(next),
   });
 });
@@ -112,18 +130,20 @@ authRoutes.post("/forgot-password", async (c) => {
     `;
     try {
       await sendPasswordResetEmail(clean, `${env.frontendUrl}/reset-password?token=${token}`);
-      console.log(`[forgot-password] reset email sent to ${clean}`);
     } catch (err) {
-      console.error(`[forgot-password] failed to send reset email to ${clean}:`, err);
+      console.error("[forgot-password] reset email failed", err);
     }
   }
   return c.json({ message: "If that email exists, a reset link has been sent." });
 });
 
 authRoutes.post("/reset-password", async (c) => {
+  const ipLimit = hitIp(`reset-use:${clientIp(c)}`, 10, 60 * 60 * 1000, "reset a password");
+  if (ipLimit) return limited(c, ipLimit);
   const { token, newPassword } = await c.req.json<{ token?: string; newPassword?: string }>();
-  if (!token || !newPassword || newPassword.length < 6) {
-    return c.json({ error: "Invalid or expired token" }, 400);
+  const badPassword = passwordProblem(newPassword || "");
+  if (!token || badPassword) {
+    return c.json({ error: badPassword || "Invalid or expired token" }, 400);
   }
   const [user] = await sql<UserRow[]>`
     select * from users
@@ -135,15 +155,18 @@ authRoutes.post("/reset-password", async (c) => {
 
   await sql`
     update users
-    set password_hash = ${await hashPassword(newPassword)},
+    set password_hash = ${await hashPassword(newPassword || "")},
         password_reset_token = null,
-        password_reset_expires_at = null
+        password_reset_expires_at = null,
+        token_version = coalesce(token_version, 0) + 1
     where id = ${user.id}
   `;
   return c.json({ message: "Password reset successful!" });
 });
 
 authRoutes.post("/resend-confirmation", async (c) => {
+  const ipLimit = hitIp(`resend:${clientIp(c)}`, 5, 60 * 60 * 1000, "request another email");
+  if (ipLimit) return limited(c, ipLimit);
   const { email } = await c.req.json<{ email?: string }>();
   const clean = (email || "").trim().toLowerCase();
   if (!clean) return c.json({ error: "Email is required." }, 400);
@@ -156,9 +179,8 @@ authRoutes.post("/resend-confirmation", async (c) => {
     try {
       await sendConfirmationEmail(clean, `${env.frontendUrl}/confirm-email?token=${token}`);
     } catch (err) {
-      console.error(`[resend-confirmation] failed for ${clean}:`, err);
+      console.error("[resend-confirmation] email failed", err);
     }
   }
   return c.json({ message: "If that account still needs confirming, a new email is on its way." });
 });
-
