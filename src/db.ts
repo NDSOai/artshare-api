@@ -9,7 +9,7 @@ export const sql = postgres(env.databaseUrl, { max: 8 });
 
 export async function migrate() {
   const file = join(dirname(fileURLToPath(import.meta.url)), "schema.sql");
-  await sql.unsafe(readFileSync(file, "utf8"));
+  await sql.unsafe("set client_min_messages = warning;\n" + readFileSync(file, "utf8"));
 }
 
 export type UserRow = {
