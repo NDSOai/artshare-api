@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
@@ -221,10 +222,30 @@ function asUpload(value: unknown): File | null {
   }
 }
 
-async function readForm(c: { req: { header: (name: string) => string | undefined; arrayBuffer: () => Promise<ArrayBuffer> } }) {
-  const type = c.req.header("content-type") || "";
-  const buf = await c.req.arrayBuffer();
-  return new Response(buf, { headers: { "content-type": type } }).formData();
+const MAX_PUBLISH_BYTES = 22 * 1024 * 1024;
+
+async function readForm(c: {
+  req: {
+    header: (name: string) => string | undefined;
+    arrayBuffer: () => Promise<ArrayBuffer>;
+    formData: () => Promise<FormData>;
+  };
+}) {
+  const length = Number(c.req.header("content-length") || 0);
+  if (length > MAX_PUBLISH_BYTES) {
+    throw new Error("That file is too large.");
+  }
+  try {
+    return await c.req.formData();
+  } catch (first) {
+    console.error("[works.formData]", first);
+    const type = c.req.header("content-type") || "";
+    const buf = await c.req.arrayBuffer();
+    if (buf.byteLength > MAX_PUBLISH_BYTES) {
+      throw new Error("That file is too large.");
+    }
+    return new Response(buf, { headers: { "content-type": type } }).formData();
+  }
 }
 
 function asTools(value: unknown): string[] {
@@ -240,7 +261,14 @@ function asTools(value: unknown): string[] {
   return [];
 }
 
-workRoutes.post("/", requireAuth, async (c) => {
+workRoutes.post(
+  "/",
+  requireAuth,
+  bodyLimit({
+    maxSize: MAX_PUBLISH_BYTES,
+    onError: (c) => c.json({ error: "That file is too large." }, 413),
+  }),
+  async (c) => {
   const user = c.get("user");
   try {
   const tooSoon = await assertCooldown(await lastWorkAt(user.id), 60 * 60 * 1000, "publish");
@@ -357,6 +385,9 @@ workRoutes.post("/", requireAuth, async (c) => {
   } catch (err) {
     console.error("[works.create]", err);
     const message = err instanceof Error ? err.message : "";
+    if (/too large/i.test(message)) {
+      return c.json({ error: "That file is too large." }, 413);
+    }
     if (/formdata|multipart|parse/i.test(message)) {
       return c.json({ error: "Could not read that upload. Try a smaller JPEG or PNG." }, 500);
     }
