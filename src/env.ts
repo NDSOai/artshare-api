@@ -13,12 +13,23 @@ function required(name: string): string {
   return value;
 }
 
+function publicFrontendUrl() {
+  const raw = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    if (host.endsWith("railway.app")) return "https://www.whootaloo.com";
+  } catch {
+    return "https://www.whootaloo.com";
+  }
+  return raw;
+}
+
 export const env = {
   port: Number(process.env.PORT || 3001),
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
   messageSecret: required("MESSAGE_SECRET"),
-  frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  frontendUrl: publicFrontendUrl(),
   resendApiKey: process.env.RESEND_API_KEY || "",
   resendFrom: process.env.RESEND_FROM || "onboarding@resend.dev",
   bucketEndpoint: process.env.BUCKET_ENDPOINT || process.env.ENDPOINT || "",
