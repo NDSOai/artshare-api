@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
@@ -228,24 +227,18 @@ async function readForm(c: {
   req: {
     header: (name: string) => string | undefined;
     arrayBuffer: () => Promise<ArrayBuffer>;
-    formData: () => Promise<FormData>;
   };
 }) {
   const length = Number(c.req.header("content-length") || 0);
   if (length > MAX_PUBLISH_BYTES) {
     throw new Error("That file is too large.");
   }
-  try {
-    return await c.req.formData();
-  } catch (first) {
-    console.error("[works.formData]", first);
-    const type = c.req.header("content-type") || "";
-    const buf = await c.req.arrayBuffer();
-    if (buf.byteLength > MAX_PUBLISH_BYTES) {
-      throw new Error("That file is too large.");
-    }
-    return new Response(buf, { headers: { "content-type": type } }).formData();
+  const type = c.req.header("content-type") || "";
+  const buf = await c.req.arrayBuffer();
+  if (buf.byteLength > MAX_PUBLISH_BYTES) {
+    throw new Error("That file is too large.");
   }
+  return new Response(buf, { headers: { "content-type": type } }).formData();
 }
 
 function asTools(value: unknown): string[] {
@@ -261,14 +254,7 @@ function asTools(value: unknown): string[] {
   return [];
 }
 
-workRoutes.post(
-  "/",
-  requireAuth,
-  bodyLimit({
-    maxSize: MAX_PUBLISH_BYTES,
-    onError: (c) => c.json({ error: "That file is too large." }, 413),
-  }),
-  async (c) => {
+workRoutes.post("/", requireAuth, async (c) => {
   const user = c.get("user");
   try {
   const tooSoon = await assertCooldown(await lastWorkAt(user.id), 60 * 60 * 1000, "publish");
@@ -357,19 +343,27 @@ workRoutes.post(
     }
   }
 
-  const [work] = await sql<WorkRow[]>`
-    insert into works (
-      id, artist_id, title, medium, description, media_url, color, remixable,
-      download_permitted, tools, kind, license, body, cover_url
-    )
-    values (
-      ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
-      ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
-      ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null},
-      ${coverUrl || null}
-    )
-    returning *
-  `;
+  let work: WorkRow;
+  try {
+    const inserted = await sql<WorkRow[]>`
+      insert into works (
+        id, artist_id, title, medium, description, media_url, color, remixable,
+        download_permitted, tools, kind, license, body, cover_url
+      )
+      values (
+        ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
+        ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
+        ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null},
+        ${coverUrl || null}
+      )
+      returning *
+    `;
+    if (!inserted[0]) return c.json({ error: "Could not save that work." }, 500);
+    work = inserted[0];
+  } catch (err) {
+    console.error("[works.insert]", err);
+    return c.json({ error: "Could not save that work." }, 500);
+  }
 
   return c.json(
     {

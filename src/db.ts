@@ -143,6 +143,13 @@ export function publicArtist(user: UserRow) {
   };
 }
 
+function workDate(value: Date | string | null | undefined) {
+  const date = value instanceof Date ? value : new Date(String(value ?? ""));
+  return Number.isFinite(date.getTime())
+    ? date.toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+}
+
 export function publicWork(
   work: WorkRow & {
     reposted_by?: string | null;
@@ -162,7 +169,7 @@ export function publicWork(
     humanVerified: Boolean(work.artist_verified),
     remixable: work.remixable,
     views: work.views,
-    date: work.created_at.toISOString().slice(0, 10),
+    date: workDate(work.created_at),
     tools: work.tools ?? [],
     description: work.description ?? undefined,
     downloadPermitted: work.download_permitted,
