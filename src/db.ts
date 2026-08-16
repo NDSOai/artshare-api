@@ -28,6 +28,7 @@ export type UserRow = {
   verified: boolean;
   email_verified_at: Date | null;
   email_verification_token: string | null;
+  email_verification_expires_at?: Date | null;
   password_reset_token: string | null;
   password_reset_expires_at: Date | null;
   mediums: string[];

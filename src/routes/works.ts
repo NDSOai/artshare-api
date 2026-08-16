@@ -5,12 +5,17 @@ import { notify } from "../lib/notify.js";
 import { assertCooldown, lastRepostAt, lastWorkAt, limited, repostsLastHour } from "../lib/rate-limit.js";
 import { parseMultipart, type FormFile } from "../lib/multipart.js";
 import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
+import { consumeCaptcha } from "../lib/captcha.js";
 import { newId } from "../lib/tokens.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
 
+function clip(value: string, max: number) {
+  return value.trim().slice(0, max);
+}
+
 workRoutes.get("/", async (c) => {
-  const q = (c.req.query("q") || "").trim();
+  const q = (c.req.query("q") || "").trim().replace(/[%_]/g, "").slice(0, 80);
   const medium = (c.req.query("medium") || "").trim();
   const kind = (c.req.query("kind") || "").trim();
   const following = c.req.query("following") === "1";
@@ -183,12 +188,12 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
     tools?: string[];
   }>().catch(() => ({} as Record<string, never>));
 
-  const title = String(body.title ?? existing.title).trim() || existing.title;
-  const medium = String(body.medium ?? existing.medium).trim() || existing.medium;
-  const description = body.description !== undefined ? String(body.description).trim() : existing.description;
-  const color = String(body.color ?? existing.color);
-  const license = String(body.license ?? existing.license ?? "All Rights Reserved");
-  const bodyText = body.body !== undefined ? String(body.body) : existing.body;
+  const title = clip(String(body.title ?? existing.title), 120) || existing.title;
+  const medium = clip(String(body.medium ?? existing.medium), 80) || existing.medium;
+  const description = body.description !== undefined ? clip(String(body.description), 500) : existing.description;
+  const color = String(body.color ?? existing.color).slice(0, 32);
+  const license = clip(String(body.license ?? existing.license ?? "All Rights Reserved"), 80);
+  const bodyText = body.body !== undefined ? String(body.body).slice(0, 20_000) : existing.body;
   const tools = Array.isArray(body.tools) ? body.tools.map(String) : existing.tools ?? [];
   const remixable = body.remixable !== undefined ? Boolean(body.remixable) : existing.remixable;
 
@@ -337,6 +342,8 @@ workRoutes.post("/", requireAuth, async (c) => {
   const tooSoon = await assertCooldown(await lastWorkAt(user.id), 60 * 60 * 1000, "publish");
   if (tooSoon) return limited(c, tooSoon);
   const contentType = c.req.header("content-type") || "";
+  let captchaToken = "";
+  let captchaAnswer = "";
   let title = "Untitled";
   let medium = "Digital Painting";
   let description = "";
@@ -364,6 +371,8 @@ workRoutes.post("/", requireAuth, async (c) => {
     license = String(form.fields.license || license);
     bodyText = String(form.fields.body || "");
     tools = asTools(form.fields.tools);
+    captchaToken = String(form.fields.captchaToken || "");
+    captchaAnswer = String(form.fields.captchaAnswer || "");
     file = asUpload(form.files.file);
     cover = asUpload(form.files.cover);
   } else {
@@ -378,6 +387,8 @@ workRoutes.post("/", requireAuth, async (c) => {
       license?: string;
       body?: string;
       tools?: string[];
+      captchaToken?: string;
+      captchaAnswer?: string;
     }>();
     title = body.title || title;
     medium = body.medium || medium;
@@ -389,7 +400,20 @@ workRoutes.post("/", requireAuth, async (c) => {
     license = body.license || license;
     bodyText = body.body || "";
     tools = asTools(body.tools);
+    captchaToken = body.captchaToken || "";
+    captchaAnswer = body.captchaAnswer || "";
   }
+
+  const captchaError = await consumeCaptcha(captchaToken, captchaAnswer);
+  if (captchaError) return c.json({ error: captchaError }, 400);
+
+  title = clip(title, 120) || "Untitled";
+  medium = clip(medium, 80) || "Digital Painting";
+  description = clip(description, 500);
+  bodyText = bodyText.slice(0, 20_000);
+  license = clip(license, 80);
+  kind = clip(kind, 20) || "image";
+  color = String(color).slice(0, 32);
 
   const workId = newId("work");
   if (file || cover) {

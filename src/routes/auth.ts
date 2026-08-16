@@ -7,27 +7,41 @@ import { hashPassword, verifyPassword } from "../lib/password.js";
 import { passwordProblem } from "../lib/password-policy.js";
 import { generateToken, newId } from "../lib/tokens.js";
 import { env } from "../env.js";
-import { clientIp, hitIp, limited } from "../lib/rate-limit.js";
+import { clientIp, hitIp, hitIpDurable, limited } from "../lib/rate-limit.js";
+import { cleanHandle, signupProblem } from "../lib/signup-guard.js";
+import { consumeCaptcha, issueCaptcha } from "../lib/captcha.js";
 
 export const authRoutes = new Hono<{ Variables: Authed }>();
 
-function cleanHandle(raw: string) {
-  return raw.replace(/^@/, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
+authRoutes.get("/captcha", async (c) => {
+  const ipLimit = hitIp(`captcha:${clientIp(c)}`, 30, 15 * 60 * 1000, "request another puzzle");
+  if (ipLimit) return limited(c, ipLimit);
+  return c.json(issueCaptcha());
+});
 
 authRoutes.post("/signup", async (c) => {
-  const ipLimit = hitIp(clientIp(c), 3, 60 * 60 * 1000, "create another account");
+  const ipLimit = await hitIpDurable(`signup:${clientIp(c)}`, 3, 60 * 60 * 1000, "create another account");
   if (ipLimit) return limited(c, ipLimit);
-  const body = await c.req.json<{ email?: string; password?: string; handle?: string; name?: string }>();
+  const body = await c.req.json<{
+    email?: string;
+    password?: string;
+    handle?: string;
+    name?: string;
+    captchaToken?: string;
+    captchaAnswer?: string;
+  }>();
+  const captchaError = await consumeCaptcha(body.captchaToken || "", body.captchaAnswer || "");
+  if (captchaError) return c.json({ error: captchaError }, 400);
   const email = (body.email || "").trim().toLowerCase();
   const name = (body.name || "").trim();
   const handle = cleanHandle(body.handle || "");
   const password = body.password || "";
   const badPassword = passwordProblem(password);
+  const badSignup = signupProblem({ email, name, handle });
 
-  if (!email || !name || !handle || badPassword) {
+  if (!email || !name || !handle || badPassword || badSignup) {
     return c.json(
-      { error: badPassword || "Name, handle, email, and a password of at least 10 characters are required." },
+      { error: badPassword || badSignup || "Name, handle, email, and a password of at least 10 characters are required." },
       400,
     );
   }
@@ -49,8 +63,8 @@ authRoutes.post("/signup", async (c) => {
 
   const token = generateToken();
   await sql`
-    insert into users (id, handle, name, email, password_hash, email_verification_token)
-    values (${newId("user")}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${token})
+    insert into users (id, handle, name, email, password_hash, email_verification_token, email_verification_expires_at)
+    values (${newId("user")}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${token}, now() + interval '48 hours')
   `;
 
   const confirmationUrl = `${env.frontendUrl}/confirm-email?token=${token}`;
@@ -93,10 +107,15 @@ authRoutes.post("/login", async (c) => {
 authRoutes.get("/me", requireAuth, (c) => c.json(publicUser(c.get("user"))));
 
 authRoutes.post("/confirm-email", async (c) => {
+  const ipLimit = hitIp(`confirm:${clientIp(c)}`, 20, 15 * 60 * 1000, "confirm that email");
+  if (ipLimit) return limited(c, ipLimit);
   const { token } = await c.req.json<{ token?: string }>();
   if (!token) return c.json({ error: "Invalid or expired token" }, 400);
   const [user] = await sql<UserRow[]>`
-    select * from users where email_verification_token = ${token} limit 1
+    select * from users
+    where email_verification_token = ${token}
+      and (email_verification_expires_at is null or email_verification_expires_at > now())
+    limit 1
   `;
   if (!user) return c.json({ error: "Invalid or expired token" }, 400);
 
@@ -173,9 +192,12 @@ authRoutes.post("/resend-confirmation", async (c) => {
   const [user] = await sql<UserRow[]>`select * from users where lower(email) = ${clean} limit 1`;
   if (user && !user.email_verified_at) {
     const token = user.email_verification_token || generateToken();
-    if (!user.email_verification_token) {
-      await sql`update users set email_verification_token = ${token} where id = ${user.id}`;
-    }
+    await sql`
+      update users
+      set email_verification_token = ${token},
+          email_verification_expires_at = now() + interval '48 hours'
+      where id = ${user.id}
+    `;
     try {
       await sendConfirmationEmail(clean, `${env.frontendUrl}/confirm-email?token=${token}`);
     } catch (err) {

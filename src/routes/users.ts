@@ -8,16 +8,18 @@ import { isStorageReady, ownMediaKey, parseDataUrl, putAvatarFile, putBannerFile
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
 userRoutes.get("/", async (c) => {
-  const q = (c.req.query("q") || "").trim().replace(/^@+/, "");
+  const q = (c.req.query("q") || "").trim().replace(/^@+/, "").replace(/[%_]/g, "").slice(0, 80);
   const users = q
     ? await sql<UserRow[]>`
         select * from users
-        where handle ilike ${"%" + q + "%"} or name ilike ${"%" + q + "%"}
+        where email_verified_at is not null
+          and (handle ilike ${"%" + q + "%"} or name ilike ${"%" + q + "%"})
         order by created_at desc
         limit 40
       `
     : await sql<UserRow[]>`
         select * from users
+        where email_verified_at is not null
         order by created_at desc
         limit 40
       `;
@@ -27,6 +29,33 @@ userRoutes.get("/", async (c) => {
 function asStringList(value: unknown, max: number) {
   if (!Array.isArray(value)) return [];
   return value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, max);
+}
+
+const SOCIAL_HOSTS: Record<string, string[]> = {
+  instagram: ["instagram.com"],
+  x: ["x.com", "twitter.com"],
+  threads: ["threads.net"],
+  bluesky: ["bsky.app"],
+  tiktok: ["tiktok.com"],
+  youtube: ["youtube.com", "youtu.be"],
+  vimeo: ["vimeo.com"],
+  bandcamp: ["bandcamp.com"],
+  soundcloud: ["soundcloud.com"],
+  spotify: ["open.spotify.com", "spotify.com"],
+  github: ["github.com"],
+  behance: ["behance.net"],
+  patreon: ["patreon.com"],
+};
+
+function socialHostOk(id: string, url: string) {
+  if (id === "website") return true;
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (SOCIAL_HOSTS[id] ?? []).some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
 }
 
 const SOCIAL_IDS = new Set([
@@ -55,7 +84,7 @@ function asSocialLinks(value: unknown) {
     const row = item as { id?: string; url?: string };
     const id = String(row.id ?? "").trim();
     const url = String(row.url ?? "").trim();
-    if (!SOCIAL_IDS.has(id) || !/^https?:\/\//i.test(url)) continue;
+    if (!SOCIAL_IDS.has(id) || !/^https?:\/\//i.test(url) || !socialHostOk(id, url)) continue;
     if (id === "website") {
       if (website) continue;
       website = true;
@@ -253,6 +282,10 @@ userRoutes.get("/:handle", async (c) => {
   const handle = c.req.param("handle").toLowerCase();
   const [user] = await sql<UserRow[]>`select * from users where lower(handle) = ${handle} limit 1`;
   if (!user) return c.json({ error: "Artist not found." }, 404);
+  const viewer = await readUserFromRequest(c);
+  if (!user.email_verified_at && viewer?.id !== user.id) {
+    return c.json({ error: "Artist not found." }, 404);
+  }
   const works = await sql<WorkRow[]>`
     select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
     from works w
@@ -269,7 +302,7 @@ userRoutes.get("/:handle", async (c) => {
     where r.user_id = ${user.id}
     order by r.created_at desc
   `;
-  const me = await readUserFromRequest(c);
+  const me = viewer;
   const showAbout = Boolean(me && (me.id === user.id || (await isFollowing(me.id, user.id))));
   return c.json({
     user: showAbout && me?.id === user.id ? publicUser(user) : undefined,

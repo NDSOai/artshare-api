@@ -33,6 +33,14 @@ alter table users add column if not exists social_links jsonb not null default '
 alter table users add column if not exists banner_position smallint not null default 50;
 alter table users add column if not exists moderation_on boolean not null default false;
 alter table users add column if not exists token_version integer not null default 0;
+alter table users add column if not exists email_verification_expires_at timestamptz;
+
+create table if not exists rate_hits (
+  key text not null,
+  at timestamptz not null default now()
+);
+
+create index if not exists rate_hits_key_at on rate_hits (key, at);
 
 create table if not exists works (
   id text primary key,

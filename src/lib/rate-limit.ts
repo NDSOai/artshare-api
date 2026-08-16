@@ -29,6 +29,29 @@ export function hitIp(ip: string, max: number, windowMs: number, action: string)
   return null;
 }
 
+export async function hitIpDurable(key: string, max: number, windowMs: number, action: string) {
+  const since = new Date(Date.now() - windowMs);
+  await sql`delete from rate_hits where at < now() - interval '2 days'`;
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from rate_hits
+    where key = ${key} and at > ${since}
+  `;
+  if ((row?.n ?? 0) >= max) {
+    const [oldest] = await sql<{ at: Date }[]>`
+      select at from rate_hits
+      where key = ${key} and at > ${since}
+      order by at asc
+      limit 1
+    `;
+    const wait = oldest
+      ? windowMs - (Date.now() - new Date(oldest.at).getTime())
+      : windowMs;
+    return { error: waitMessage(Math.max(wait, 1000), action), retryAfter: Math.ceil(Math.max(wait, 1000) / 1000) };
+  }
+  await sql`insert into rate_hits (key) values (${key})`;
+  return null;
+}
+
 export async function assertCooldown(
   last: Date | null | undefined,
   gapMs: number,
