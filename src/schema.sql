@@ -105,8 +105,6 @@ create table if not exists collection_works (
 
 alter table collection_works add column if not exists created_at timestamptz not null default now();
 alter table likes add column if not exists created_at timestamptz not null default now();
-alter table reposts add column if not exists created_at timestamptz not null default now();
-alter table reposts add column if not exists caption text not null default '';
 
 create table if not exists notifications (
   id text primary key,
@@ -124,6 +122,10 @@ create index if not exists notifications_user_idx on notifications (user_id, cre
 create table if not exists reposts (
   user_id text not null references users(id) on delete cascade,
   work_id text not null references works(id) on delete cascade,
+  caption text not null default '',
   created_at timestamptz not null default now(),
   primary key (user_id, work_id)
 );
+
+alter table reposts add column if not exists created_at timestamptz not null default now();
+alter table reposts add column if not exists caption text not null default '';
