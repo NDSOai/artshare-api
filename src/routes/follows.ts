@@ -3,6 +3,7 @@ import { sql, type UserRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { followsLastHour, limited } from "../lib/rate-limit.js";
+import { publicMediaUrl } from "../lib/storage.js";
 
 export const followRoutes = new Hono<{ Variables: Authed }>();
 
@@ -46,6 +47,39 @@ followRoutes.get("/", requireAuth, async (c) => {
   return c.json({
     following: following.map((row) => row.handle),
     followers: followers.map((row) => row.handle),
+  });
+});
+
+followRoutes.get("/hometree", requireAuth, async (c) => {
+  const me = c.get("user");
+  const rows = await sql<
+    {
+      handle: string;
+      name: string;
+      photo_url: string | null;
+      verified: boolean;
+      last_posted_at: Date | null;
+    }[]
+  >`
+    select
+      u.handle,
+      u.name,
+      u.photo_url,
+      u.verified,
+      (select max(w.created_at) from works w where w.artist_id = u.id) as last_posted_at
+    from follows f
+    join users u on u.id = f.follower_id
+    where f.followee_id = ${me.id}
+    order by last_posted_at desc nulls last, lower(u.handle) asc
+  `;
+  return c.json({
+    people: rows.map((row) => ({
+      handle: row.handle,
+      name: row.name,
+      photoUrl: publicMediaUrl(row.photo_url),
+      verified: row.verified,
+      lastPostedAt: row.last_posted_at ? row.last_posted_at.toISOString() : null,
+    })),
   });
 });
 
