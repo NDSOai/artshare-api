@@ -8,15 +8,19 @@ import { isStorageReady, parseDataUrl, putAvatarFile, putBannerFile } from "../l
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
 userRoutes.get("/", async (c) => {
-  const q = (c.req.query("q") || "").trim();
-  if (q.length < 2) return c.json({ users: [] });
-  const like = `%${q}%`;
-  const users = await sql<UserRow[]>`
-    select * from users
-    where handle ilike ${like} or name ilike ${like}
-    order by created_at desc
-    limit 20
-  `;
+  const q = (c.req.query("q") || "").trim().replace(/^@+/, "");
+  const users = q
+    ? await sql<UserRow[]>`
+        select * from users
+        where handle ilike ${"%" + q + "%"} or name ilike ${"%" + q + "%"}
+        order by created_at desc
+        limit 40
+      `
+    : await sql<UserRow[]>`
+        select * from users
+        order by created_at desc
+        limit 40
+      `;
   return c.json({ users: users.map((user) => veilAbout(publicArtist(user), false)) });
 });
 
