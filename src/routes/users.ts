@@ -223,6 +223,13 @@ userRoutes.get("/me/portfolio", requireAuth, async (c) => {
     order by r.created_at desc
     limit 40
   `;
+  const works = await sql<WorkRow[]>`
+    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
+    from works w
+    join users u on u.id = w.artist_id
+    where w.artist_id = ${me.id}
+    order by w.created_at desc
+  `;
   const collections = await sql<
     { handle: string; name: string; work_id: string; title: string; collection: string; created_at: Date }[]
   >`
@@ -239,6 +246,7 @@ userRoutes.get("/me/portfolio", requireAuth, async (c) => {
     views: stats?.views ?? 0,
     cheers: stats?.cheers ?? 0,
     collectionAdds: stats?.collection_adds ?? 0,
+    works: works.map(publicWork),
     shares: shares.map((row) => ({
       handle: row.handle,
       name: row.name,

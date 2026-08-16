@@ -165,6 +165,75 @@ workRoutes.get("/:id/like", requireAuth, async (c) => {
   return c.json({ liked: mine.n > 0, count: count.n });
 });
 
+workRoutes.patch("/:id", requireAuth, async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+  const [existing] = await sql<WorkRow[]>`select * from works where id = ${id} limit 1`;
+  if (!existing) return c.json({ error: "Work not found." }, 404);
+  if (existing.artist_id !== user.id) return c.json({ error: "You can only edit your own work." }, 403);
+
+  const body = await c.req.json<{
+    title?: string;
+    medium?: string;
+    description?: string;
+    color?: string;
+    remixable?: boolean;
+    license?: string;
+    body?: string;
+    tools?: string[];
+  }>().catch(() => ({} as Record<string, never>));
+
+  const title = String(body.title ?? existing.title).trim() || existing.title;
+  const medium = String(body.medium ?? existing.medium).trim() || existing.medium;
+  const description = body.description !== undefined ? String(body.description).trim() : existing.description;
+  const color = String(body.color ?? existing.color);
+  const license = String(body.license ?? existing.license ?? "All Rights Reserved");
+  const bodyText = body.body !== undefined ? String(body.body) : existing.body;
+  const tools = Array.isArray(body.tools) ? body.tools.map(String) : existing.tools ?? [];
+  const remixable = body.remixable !== undefined ? Boolean(body.remixable) : existing.remixable;
+
+  try {
+    const [work] = await sql<WorkRow[]>`
+      update works set
+        title = ${title},
+        medium = ${medium},
+        description = ${description || null},
+        color = ${color},
+        remixable = ${remixable},
+        download_permitted = ${remixable},
+        tools = ${sql.json(tools)},
+        license = ${license},
+        body = ${bodyText || null}
+      where id = ${existing.id}
+      returning *
+    `;
+    if (!work) return c.json({ error: "Could not save that work." }, 500);
+    return c.json({
+      work: publicWork({
+        ...work,
+        artist_name: user.name,
+        artist_handle: user.handle,
+        artist_verified: user.verified,
+      }),
+    });
+  } catch (err) {
+    console.error("[works.update]", err);
+    return c.json({ error: "Could not save that work." }, 500);
+  }
+});
+
+workRoutes.delete("/:id", requireAuth, async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+  const [existing] = await sql<{ id: string; artist_id: string }[]>`
+    select id, artist_id from works where id = ${id} limit 1
+  `;
+  if (!existing) return c.json({ error: "Work not found." }, 404);
+  if (existing.artist_id !== user.id) return c.json({ error: "You can only delete your own work." }, 403);
+  await sql`delete from works where id = ${existing.id}`;
+  return c.json({ deleted: true, id: existing.id });
+});
+
 workRoutes.get("/:id", async (c) => {
   const [work] = await sql<WorkRow[]>`
     select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
