@@ -19,13 +19,16 @@ export function isStorageReady() {
   return Boolean(env.bucketEndpoint && env.bucketName && env.bucketAccessKey && env.bucketSecretKey);
 }
 
-function client() {
+function region() {
+  return !env.bucketRegion || env.bucketRegion === "auto" ? "us-east-1" : env.bucketRegion;
+}
+
+function client(forcePathStyle = true) {
   if (!isStorageReady()) return null;
-  const region = !env.bucketRegion || env.bucketRegion === "auto" ? "us-east-1" : env.bucketRegion;
   return new S3Client({
-    region,
+    region: region(),
     endpoint: env.bucketEndpoint,
-    forcePathStyle: true,
+    forcePathStyle,
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
     credentials: {
@@ -33,6 +36,29 @@ function client() {
       secretAccessKey: env.bucketSecretKey,
     },
   });
+}
+
+async function putObject(key: string, body: Buffer, contentType: string) {
+  let last: unknown;
+  for (const forcePathStyle of [true, false]) {
+    const s3 = client(forcePathStyle);
+    if (!s3) throw new Error("File storage is not ready yet.");
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: env.bucketName,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+        }),
+      );
+      return;
+    } catch (err) {
+      last = err;
+      console.error("[storage.put]", { key, forcePathStyle, err });
+    }
+  }
+  throw last instanceof Error ? last : new Error("Could not store that file.");
 }
 
 function guessType(name: string, kind?: string) {
@@ -65,34 +91,18 @@ export function parseDataUrl(dataUrl: string) {
 }
 
 export async function putAvatarFile(userId: string, file: { type: string; bytes: Buffer }) {
-  const s3 = client();
-  if (!s3) throw new Error("File storage is not ready yet.");
+  if (!isStorageReady()) throw new Error("File storage is not ready yet.");
   const ext = file.type.includes("png") ? "png" : file.type.includes("webp") ? "webp" : "jpg";
   const key = `avatars/${userId}.${ext}`;
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: env.bucketName,
-      Key: key,
-      Body: file.bytes,
-      ContentType: file.type || "image/jpeg",
-    }),
-  );
+  await putObject(key, file.bytes, file.type || "image/jpeg");
   return key;
 }
 
 export async function putBannerFile(userId: string, file: { type: string; bytes: Buffer }) {
-  const s3 = client();
-  if (!s3) throw new Error("File storage is not ready yet.");
+  if (!isStorageReady()) throw new Error("File storage is not ready yet.");
   const ext = file.type.includes("png") ? "png" : file.type.includes("webp") ? "webp" : "jpg";
   const key = `banners/${userId}.${ext}`;
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: env.bucketName,
-      Key: key,
-      Body: file.bytes,
-      ContentType: file.type || "image/jpeg",
-    }),
-  );
+  await putObject(key, file.bytes, file.type || "image/jpeg");
   return key;
 }
 
@@ -122,19 +132,11 @@ export function assertUpload(file: File, kind: string) {
 }
 
 export async function putWorkFile(userId: string, workId: string, file: File, kind: string) {
-  const s3 = client();
-  if (!s3) throw new Error("File storage is not ready yet.");
+  if (!isStorageReady()) throw new Error("File storage is not ready yet.");
   const type = file.type || guessType(file.name, kind);
   const key = `works/${userId}/${workId}.${extFor(type, kind)}`;
   const body = Buffer.from(await file.arrayBuffer());
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: env.bucketName,
-      Key: key,
-      Body: body,
-      ContentType: type || (kind === "music" ? "audio/mpeg" : "image/jpeg"),
-    }),
-  );
+  await putObject(key, body, type || (kind === "music" ? "audio/mpeg" : "image/jpeg"));
   return key;
 }
 

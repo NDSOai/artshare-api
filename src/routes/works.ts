@@ -221,6 +221,12 @@ function asUpload(value: unknown): File | null {
   }
 }
 
+async function readForm(c: { req: { header: (name: string) => string | undefined; arrayBuffer: () => Promise<ArrayBuffer> } }) {
+  const type = c.req.header("content-type") || "";
+  const buf = await c.req.arrayBuffer();
+  return new Response(buf, { headers: { "content-type": type } }).formData();
+}
+
 function asTools(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
   if (typeof value === "string" && value) {
@@ -256,7 +262,7 @@ workRoutes.post("/", requireAuth, async (c) => {
 
   const useForm = contentType.includes("multipart/form-data") || !contentType.includes("json");
   if (useForm) {
-    const form = await c.req.formData();
+    const form = await readForm(c);
     title = String(form.get("title") || title);
     medium = String(form.get("medium") || medium);
     description = String(form.get("description") || "");
@@ -331,7 +337,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     values (
       ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
       ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
-      ${sql.json(tools)}, ${kind}, ${license}, ${bodyText || null},
+      ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null},
       ${coverUrl || null}
     )
     returning *
@@ -350,6 +356,10 @@ workRoutes.post("/", requireAuth, async (c) => {
   );
   } catch (err) {
     console.error("[works.create]", err);
+    const message = err instanceof Error ? err.message : "";
+    if (/formdata|multipart|parse/i.test(message)) {
+      return c.json({ error: "Could not read that upload. Try a smaller JPEG or PNG." }, 500);
+    }
     return c.json({ error: "Could not publish that work. Try again in a moment." }, 500);
   }
 });

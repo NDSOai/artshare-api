@@ -62,7 +62,7 @@ app.notFound((c) => c.json({ error: "Not found." }, 404));
 
 await migrate();
 
-serve({ fetch: app.fetch, port: env.port }, (info) => {
+serve({ fetch: app.fetch, port: env.port, overrideGlobalObjects: true }, (info) => {
   console.log(`artshare-api listening on ${info.port}`);
 });
 
