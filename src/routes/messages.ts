@@ -18,12 +18,19 @@ type MessageRow = {
   sender_handle: string;
 };
 
+function stamp(value: Date | string | number | null | undefined) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
 function open(row: MessageRow) {
   return {
     id: row.id,
     from: row.sender_handle,
     text: decryptBody(row.body_enc),
-    at: row.created_at.getTime(),
+    at: stamp(row.created_at),
   };
 }
 
@@ -36,6 +43,7 @@ messageRoutes.use("*", requireAuth);
 
 messageRoutes.get("/", async (c) => {
   const me = c.get("user");
+  try {
   const rows = await sql<(MessageRow & { other_handle: string; other_name: string })[]>`
     select distinct on (least(m.sender_id, m.recipient_id), greatest(m.sender_id, m.recipient_id))
       m.*,
@@ -56,6 +64,10 @@ messageRoutes.get("/", async (c) => {
       last: open(row),
     })),
   });
+  } catch (err) {
+    console.error("[messages.list]", err);
+    return c.json({ error: "Could not load messages." }, 500);
+  }
 });
 
 messageRoutes.get("/:handle", async (c) => {
@@ -65,6 +77,7 @@ messageRoutes.get("/:handle", async (c) => {
   if (!(await areMutual(me.id, them.id))) {
     return c.json({ error: "You both need to follow each other to chat." }, 403);
   }
+  try {
   const rows = await sql<MessageRow[]>`
     select m.*, s.handle as sender_handle
     from messages m
@@ -77,6 +90,10 @@ messageRoutes.get("/:handle", async (c) => {
     handle: them.handle,
     messages: rows.map(open),
   });
+  } catch (err) {
+    console.error("[messages.thread]", err);
+    return c.json({ error: "Could not load that conversation." }, 500);
+  }
 });
 
 messageRoutes.post("/:handle", async (c) => {

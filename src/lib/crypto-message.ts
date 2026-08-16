@@ -14,11 +14,17 @@ export function encryptBody(text: string) {
 }
 
 export function decryptBody(payload: string) {
-  const buf = Buffer.from(payload, "base64");
-  const iv = buf.subarray(0, 12);
-  const tag = buf.subarray(12, 28);
-  const encrypted = buf.subarray(28);
-  const decipher = createDecipheriv("aes-256-gcm", key(), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+  try {
+    const buf = Buffer.from(payload || "", "base64");
+    if (buf.length < 29) return "";
+    const iv = buf.subarray(0, 12);
+    const tag = buf.subarray(12, 28);
+    const encrypted = buf.subarray(28);
+    const decipher = createDecipheriv("aes-256-gcm", key(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+  } catch (err) {
+    console.error("[message.decrypt]", err);
+    return "";
+  }
 }
