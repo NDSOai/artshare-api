@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { clampBannerPosition, publicArtist, publicUser, publicWork, sql, veilAbout, type UserRow, type WorkRow } from "../db.js";
+import { isAdminEmail } from "../lib/admin.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { isFollowing } from "./follows.js";
 import { isStorageReady, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
@@ -111,6 +112,18 @@ userRoutes.delete("/me", requireAuth, async (c) => {
   const current = c.get("user");
   await sql`delete from users where id = ${current.id}`;
   return c.json({ message: "Account deleted." });
+});
+
+userRoutes.patch("/me/moderation", requireAuth, async (c) => {
+  const current = c.get("user");
+  if (!isAdminEmail(current.email)) {
+    return c.json({ error: "This account cannot turn on moderation." }, 403);
+  }
+  const body = await c.req.json<{ on?: boolean }>().catch(() => ({ on: false }));
+  const [user] = await sql<UserRow[]>`
+    update users set moderation_on = ${Boolean(body.on)} where id = ${current.id} returning *
+  `;
+  return c.json(publicUser(user));
 });
 
 userRoutes.patch("/me", requireAuth, async (c) => {

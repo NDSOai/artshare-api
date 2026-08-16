@@ -3,6 +3,7 @@ import { sql, type UserRow } from "../db.js";
 import { decryptBody, encryptBody } from "../lib/crypto-message.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
+import { assertCooldown, lastMessageAt, limited, messagesLastHour } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
 import { areMutual } from "./follows.js";
 
@@ -87,8 +88,13 @@ messageRoutes.post("/:handle", async (c) => {
     return c.json({ error: "You both need to follow each other to chat." }, 403);
   }
   const body = await c.req.json<{ text?: string }>();
-  const text = (body.text || "").trim();
+  const text = (body.text || "").trim().slice(0, 1000);
   if (!text) return c.json({ error: "Write a message first." }, 400);
+  const tooSoon = await assertCooldown(await lastMessageAt(me.id), 10_000, "send a message");
+  if (tooSoon) return limited(c, tooSoon);
+  if ((await messagesLastHour(me.id)) >= 30) {
+    return limited(c, { error: "You can send more messages in a bit.", retryAfter: 3600 });
+  }
 
   const [row] = await sql<MessageRow[]>`
     insert into messages (id, sender_id, recipient_id, body_enc)

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { sql, type UserRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
+import { followsLastHour, limited } from "../lib/rate-limit.js";
 
 export const followRoutes = new Hono<{ Variables: Authed }>();
 
@@ -50,6 +51,9 @@ followRoutes.post("/:handle", requireAuth, async (c) => {
   const them = await findUser(c.req.param("handle"));
   if (!them) return c.json({ error: "Artist not found." }, 404);
   if (them.id === me.id) return c.json({ error: "You cannot follow yourself." }, 400);
+  if ((await followsLastHour(me.id)) >= 30) {
+    return limited(c, { error: "You can follow more people in a bit.", retryAfter: 3600 });
+  }
   const inserted = await sql<{ follower_id: string }[]>`
     insert into follows (follower_id, followee_id)
     values (${me.id}, ${them.id})

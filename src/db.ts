@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { env } from "./env.js";
+import { isAdminEmail } from "./lib/admin.js";
 import { publicMediaUrl } from "./lib/storage.js";
 
 export const sql = postgres(env.databaseUrl, { max: 8 });
@@ -33,6 +34,7 @@ export type UserRow = {
   favorite_handles: string[];
   pinned_work_ids: string[];
   social_links?: { id: string; url: string }[];
+  moderation_on?: boolean;
   created_at: Date;
 };
 
@@ -80,6 +82,8 @@ export function publicUser(user: UserRow) {
     favoriteHandles: user.favorite_handles ?? [],
     pinnedWorkIds: user.pinned_work_ids ?? [],
     socialLinks: publicSocials(user.social_links),
+    adminEligible: isAdminEmail(user.email),
+    moderationOn: isAdminEmail(user.email) && Boolean(user.moderation_on),
   };
 }
 

@@ -29,4 +29,8 @@ export const env = {
   apiPublicUrl:
     process.env.API_PUBLIC_URL ||
     (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : ""),
+  adminEmails: (process.env.ADMIN_EMAILS || "neilsaldanaobrien@gmail.com")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
 };

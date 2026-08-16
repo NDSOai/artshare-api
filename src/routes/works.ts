@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
+import { assertCooldown, lastRepostAt, lastWorkAt, limited, repostsLastHour } from "../lib/rate-limit.js";
 import { assertUpload, isStorageReady, putWorkFile } from "../lib/storage.js";
 import { newId } from "../lib/tokens.js";
 
@@ -119,6 +120,11 @@ workRoutes.post("/:id/repost", requireAuth, async (c) => {
     await sql`update reposts set caption = ${caption} where user_id = ${user.id} and work_id = ${work.id}`;
     return c.json({ reposted: true, caption });
   }
+  if ((await repostsLastHour(user.id)) >= 10) {
+    return limited(c, { error: "You can share again in a bit.", retryAfter: 3600 });
+  }
+  const tooSoon = await assertCooldown(await lastRepostAt(user.id), 20_000, "share");
+  if (tooSoon) return limited(c, tooSoon);
   await sql`
     insert into reposts (user_id, work_id, caption) values (${user.id}, ${work.id}, ${caption})
   `;
@@ -192,6 +198,8 @@ workRoutes.get("/:id", async (c) => {
 
 workRoutes.post("/", requireAuth, async (c) => {
   const user = c.get("user");
+  const tooSoon = await assertCooldown(await lastWorkAt(user.id), 60 * 60 * 1000, "publish");
+  if (tooSoon) return limited(c, tooSoon);
   const contentType = c.req.header("content-type") || "";
   let title = "Untitled";
   let medium = "Digital Painting";

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { sql } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
+import { assertCooldown, commentsLastHour, lastCommentAt, limited } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
 
 export const commentRoutes = new Hono<{ Variables: Authed }>();
@@ -35,8 +36,13 @@ commentRoutes.post("/:workId/comments", requireAuth, async (c) => {
   `;
   if (!work) return c.json({ error: "Work not found." }, 404);
   const body = await c.req.json<{ text?: string; pinnedTo?: { x: number; y: number } | null }>();
-  const text = (body.text || "").trim();
+  const text = (body.text || "").trim().slice(0, 500);
   if (!text) return c.json({ error: "Write a comment first." }, 400);
+  const tooSoon = await assertCooldown(await lastCommentAt(user.id), 15_000, "comment");
+  if (tooSoon) return limited(c, tooSoon);
+  if ((await commentsLastHour(user.id)) >= 20) {
+    return limited(c, { error: "You can comment again in a bit.", retryAfter: 3600 });
+  }
 
   const [row] = await sql<
     { id: string; text: string; pin_x: number | null; pin_y: number | null; created_at: Date }[]

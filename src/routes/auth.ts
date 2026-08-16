@@ -6,6 +6,7 @@ import { signToken } from "../lib/jwt.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
 import { generateToken, newId } from "../lib/tokens.js";
 import { env } from "../env.js";
+import { clientIp, hitIp, limited } from "../lib/rate-limit.js";
 
 export const authRoutes = new Hono<{ Variables: Authed }>();
 
@@ -14,6 +15,8 @@ function cleanHandle(raw: string) {
 }
 
 authRoutes.post("/signup", async (c) => {
+  const ipLimit = hitIp(clientIp(c), 3, 60 * 60 * 1000, "create another account");
+  if (ipLimit) return limited(c, ipLimit);
   const body = await c.req.json<{ email?: string; password?: string; handle?: string; name?: string }>();
   const email = (body.email || "").trim().toLowerCase();
   const name = (body.name || "").trim();
@@ -94,6 +97,8 @@ authRoutes.post("/confirm-email", async (c) => {
 });
 
 authRoutes.post("/forgot-password", async (c) => {
+  const ipLimit = hitIp(`reset:${clientIp(c)}`, 5, 60 * 60 * 1000, "request another reset");
+  if (ipLimit) return limited(c, ipLimit);
   const { email } = await c.req.json<{ email?: string }>();
   const clean = (email || "").trim().toLowerCase();
   const [user] = await sql<UserRow[]>`select * from users where lower(email) = ${clean} limit 1`;
