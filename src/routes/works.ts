@@ -3,6 +3,7 @@ import { publicWork, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { assertCooldown, lastRepostAt, lastWorkAt, limited, repostsLastHour } from "../lib/rate-limit.js";
+import { parseMultipart, type FormFile } from "../lib/multipart.js";
 import { assertUpload, isStorageReady, putWorkFile } from "../lib/storage.js";
 import { newId } from "../lib/tokens.js";
 
@@ -205,20 +206,12 @@ function guessUploadType(name: string) {
   return "";
 }
 
-function asUpload(value: unknown): File | null {
-  if (!value || typeof value !== "object") return null;
-  const blob = value as Blob & { name?: string; size?: number; arrayBuffer?: () => Promise<ArrayBuffer> };
-  if (typeof blob.size !== "number" || blob.size <= 0 || typeof blob.arrayBuffer !== "function") return null;
-  const name = typeof blob.name === "string" && blob.name ? blob.name : "upload";
-  const type = blob.type || guessUploadType(name) || "application/octet-stream";
-  if (value instanceof File) {
-    return value.type ? value : new File([value], name, { type });
+function asUpload(value: FormFile | undefined): FormFile | null {
+  if (!value || value.size <= 0) return null;
+  if (!value.type) {
+    return { ...value, type: guessUploadType(value.name) || "application/octet-stream" };
   }
-  try {
-    return new File([value as Blob], name, { type });
-  } catch {
-    return value as File;
-  }
+  return value;
 }
 
 const MAX_PUBLISH_BYTES = 22 * 1024 * 1024;
@@ -234,11 +227,26 @@ async function readForm(c: {
     throw new Error("That file is too large.");
   }
   const type = c.req.header("content-type") || "";
-  const buf = await c.req.arrayBuffer();
+  const buf = Buffer.from(await c.req.arrayBuffer());
   if (buf.byteLength > MAX_PUBLISH_BYTES) {
     throw new Error("That file is too large.");
   }
-  return new Response(buf, { headers: { "content-type": type } }).formData();
+  if (!type.includes("multipart/form-data")) {
+    throw new Error("Could not read that upload.");
+  }
+  return parseMultipart(buf, type);
+}
+
+function publishFail(err: unknown) {
+  const message = err instanceof Error ? err.message : "";
+  if (/too large/i.test(message)) return { error: "That file is too large.", status: 413 as const };
+  if (/formdata|multipart|boundary|upload/i.test(message)) {
+    return { error: "Could not read that upload. Try a smaller JPEG or PNG.", status: 500 as const };
+  }
+  if (message && message.length < 160 && !/\/src\/|node_modules|at\s+\S+\s+\(/i.test(message)) {
+    return { error: message, status: 500 as const };
+  }
+  return { error: "Could not publish that work. Try again in a moment.", status: 500 as const };
 }
 
 function asTools(value: unknown): string[] {
@@ -270,25 +278,25 @@ workRoutes.post("/", requireAuth, async (c) => {
   let license = "All Rights Reserved";
   let bodyText = "";
   let tools: string[] = [];
-  let file: File | null = null;
-  let cover: File | null = null;
+  let file: FormFile | null = null;
+  let cover: FormFile | null = null;
   let coverUrl = "";
 
   const useForm = contentType.includes("multipart/form-data") || !contentType.includes("json");
   if (useForm) {
     const form = await readForm(c);
-    title = String(form.get("title") || title);
-    medium = String(form.get("medium") || medium);
-    description = String(form.get("description") || "");
-    mediaUrl = String(form.get("mediaUrl") || form.get("url") || "");
-    color = String(form.get("color") || color);
-    remixable = String(form.get("remixable")) === "true";
-    kind = String(form.get("kind") || kind);
-    license = String(form.get("license") || license);
-    bodyText = String(form.get("body") || "");
-    tools = asTools(form.get("tools"));
-    file = asUpload(form.get("file"));
-    cover = asUpload(form.get("cover"));
+    title = String(form.fields.title || title);
+    medium = String(form.fields.medium || medium);
+    description = String(form.fields.description || "");
+    mediaUrl = String(form.fields.mediaUrl || form.fields.url || "");
+    color = String(form.fields.color || color);
+    remixable = String(form.fields.remixable) === "true";
+    kind = String(form.fields.kind || kind);
+    license = String(form.fields.license || license);
+    bodyText = String(form.fields.body || "");
+    tools = asTools(form.fields.tools);
+    file = asUpload(form.files.file);
+    cover = asUpload(form.files.cover);
   } else {
     const body = await c.req.json<{
       title?: string;
@@ -353,7 +361,7 @@ workRoutes.post("/", requireAuth, async (c) => {
       values (
         ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
         ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
-        ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null},
+        ${sql.json(tools)}, ${kind}, ${license}, ${bodyText || null},
         ${coverUrl || null}
       )
       returning *
@@ -378,13 +386,7 @@ workRoutes.post("/", requireAuth, async (c) => {
   );
   } catch (err) {
     console.error("[works.create]", err);
-    const message = err instanceof Error ? err.message : "";
-    if (/too large/i.test(message)) {
-      return c.json({ error: "That file is too large." }, 413);
-    }
-    if (/formdata|multipart|parse/i.test(message)) {
-      return c.json({ error: "Could not read that upload. Try a smaller JPEG or PNG." }, 500);
-    }
-    return c.json({ error: "Could not publish that work. Try again in a moment." }, 500);
+    const fail = publishFail(err);
+    return c.json({ error: fail.error }, fail.status);
   }
 });

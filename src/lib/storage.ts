@@ -116,7 +116,14 @@ function extFor(type: string, kind: string) {
   return kind === "music" ? "mp3" : "jpg";
 }
 
-export function assertUpload(file: File, kind: string) {
+export type UploadBlob = {
+  name: string;
+  type: string;
+  size: number;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+};
+
+export function assertUpload(file: UploadBlob, kind: string) {
   const type = file.type || guessType(file.name, kind);
   if (kind === "image") {
     if (!IMAGE_TYPES.has(type) && type !== "image/jpg") return "Use JPEG, PNG, or WebP, under 3MB.";
@@ -131,7 +138,7 @@ export function assertUpload(file: File, kind: string) {
   return "This type cannot be uploaded yet.";
 }
 
-export async function putWorkFile(userId: string, workId: string, file: File, kind: string) {
+export async function putWorkFile(userId: string, workId: string, file: UploadBlob, kind: string) {
   if (!isStorageReady()) throw new Error("File storage is not ready yet.");
   const type = file.type || guessType(file.name, kind);
   const key = `works/${userId}/${workId}.${extFor(type, kind)}`;

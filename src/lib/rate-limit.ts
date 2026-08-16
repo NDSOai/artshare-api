@@ -33,7 +33,9 @@ export async function assertCooldown(
   action: string,
 ) {
   if (!last) return null;
-  const wait = gapMs - (Date.now() - last.getTime());
+  const at = last instanceof Date ? last.getTime() : new Date(String(last)).getTime();
+  if (!Number.isFinite(at)) return null;
+  const wait = gapMs - (Date.now() - at);
   if (wait <= 0) return null;
   return { error: waitMessage(wait, action), retryAfter: Math.ceil(wait / 1000) };
 }

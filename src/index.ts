@@ -39,7 +39,9 @@ app.use(
   }),
 );
 
-app.get("/health", (c) => c.json({ ok: true, service: "artshare-api", storage: isStorageReady() }));
+app.get("/health", (c) =>
+  c.json({ ok: true, service: "artshare-api", storage: isStorageReady(), publish: "buffer" }),
+);
 
 app.onError((err, c) => {
   console.error(err);
