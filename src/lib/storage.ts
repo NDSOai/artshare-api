@@ -24,6 +24,7 @@ function client() {
   return new S3Client({
     region: env.bucketRegion || "auto",
     endpoint: env.bucketEndpoint,
+    forcePathStyle: true,
     credentials: {
       accessKeyId: env.bucketAccessKey,
       secretAccessKey: env.bucketSecretKey,

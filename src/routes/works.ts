@@ -196,8 +196,30 @@ workRoutes.get("/:id", async (c) => {
   });
 });
 
+function asUpload(value: unknown): File | null {
+  if (value instanceof File && value.size > 0) return value;
+  if (typeof Blob !== "undefined" && value instanceof Blob && value.size > 0) {
+    return new File([value], "upload", { type: value.type || "application/octet-stream" });
+  }
+  return null;
+}
+
+function asTools(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string" && value) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      return value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
 workRoutes.post("/", requireAuth, async (c) => {
   const user = c.get("user");
+  try {
   const tooSoon = await assertCooldown(await lastWorkAt(user.id), 60 * 60 * 1000, "publish");
   if (tooSoon) return limited(c, tooSoon);
   const contentType = c.req.header("content-type") || "";
@@ -215,7 +237,8 @@ workRoutes.post("/", requireAuth, async (c) => {
   let cover: File | null = null;
   let coverUrl = "";
 
-  if (contentType.includes("multipart/form-data")) {
+  const useForm = contentType.includes("multipart/form-data") || !contentType.includes("json");
+  if (useForm) {
     const form = await c.req.formData();
     title = String(form.get("title") || title);
     medium = String(form.get("medium") || medium);
@@ -226,19 +249,9 @@ workRoutes.post("/", requireAuth, async (c) => {
     kind = String(form.get("kind") || kind);
     license = String(form.get("license") || license);
     bodyText = String(form.get("body") || "");
-    const rawTools = form.get("tools");
-    if (typeof rawTools === "string" && rawTools) {
-      try {
-        const parsed = JSON.parse(rawTools);
-        if (Array.isArray(parsed)) tools = parsed.map(String);
-      } catch {
-        tools = rawTools.split(",").map((t) => t.trim()).filter(Boolean);
-      }
-    }
-    const uploaded = form.get("file");
-    if (uploaded instanceof File && uploaded.size > 0) file = uploaded;
-    const uploadedCover = form.get("cover");
-    if (uploadedCover instanceof File && uploadedCover.size > 0) cover = uploadedCover;
+    tools = asTools(form.get("tools"));
+    file = asUpload(form.get("file"));
+    cover = asUpload(form.get("cover"));
   } else {
     const body = await c.req.json<{
       title?: string;
@@ -261,7 +274,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     kind = body.kind || kind;
     license = body.license || license;
     bodyText = body.body || "";
-    if (Array.isArray(body.tools)) tools = body.tools.map(String);
+    tools = asTools(body.tools);
   }
 
   const workId = newId("work");
@@ -301,7 +314,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     values (
       ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
       ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
-      ${JSON.stringify(tools)}::jsonb, ${kind}, ${license}, ${bodyText || null},
+      ${sql.json(tools)}, ${kind}, ${license}, ${bodyText || null},
       ${coverUrl || null}
     )
     returning *
@@ -318,4 +331,8 @@ workRoutes.post("/", requireAuth, async (c) => {
     },
     201,
   );
+  } catch (err) {
+    console.error("[works.create]", err);
+    return c.json({ error: "Could not publish that work. Try again in a moment." }, 500);
+  }
 });
