@@ -18,13 +18,24 @@ import { adminRoutes } from "./routes/admin.js";
 
 const app = new Hono();
 
+const allowedOrigins = new Set(
+  [
+    env.frontendUrl,
+    "http://localhost:3000",
+    "https://www.whootaloo.com",
+    "https://whootaloo.com",
+    "https://artshare-frontend-production.up.railway.app",
+  ].map((origin) => origin.replace(/\/$/, "")),
+);
+
 app.use("*", logger());
 app.use(
   "*",
   cors({
-    origin: [env.frontendUrl, "http://localhost:3000"],
+    origin: (origin) => (origin && allowedOrigins.has(origin) ? origin : null),
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   }),
 );
 
