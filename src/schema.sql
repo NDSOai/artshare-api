@@ -72,6 +72,8 @@ create table if not exists comments (
   created_at timestamptz not null default now()
 );
 
+alter table comments add column if not exists revisions jsonb not null default '[]'::jsonb;
+
 create table if not exists follows (
   follower_id text not null references users(id) on delete cascade,
   followee_id text not null references users(id) on delete cascade,

@@ -194,7 +194,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
   const color = String(body.color ?? existing.color).slice(0, 32);
   const license = clip(String(body.license ?? existing.license ?? "All Rights Reserved"), 80);
   const bodyText = body.body !== undefined ? String(body.body).slice(0, 20_000) : existing.body;
-  const tools = Array.isArray(body.tools) ? body.tools.map(String) : existing.tools ?? [];
+  const tools = Array.isArray(body.tools) ? asTools(body.tools) : existing.tools ?? [];
   const remixable = body.remixable !== undefined ? Boolean(body.remixable) : existing.remixable;
 
   try {
@@ -260,8 +260,16 @@ workRoutes.get("/:id", async (c) => {
   const [count] = await sql<{ n: number }[]>`
     select count(*)::int as n from reposts where work_id = ${work.id}
   `;
+  const [collects] = await sql<{ n: number }[]>`
+    select count(*)::int as n from collection_works where work_id = ${work.id}
+  `;
   return c.json({
-    work: publicWork({ ...work, views: work.views + 1, share_count: count?.n ?? shares.length }),
+    work: publicWork({
+      ...work,
+      views: work.views + 1,
+      share_count: count?.n ?? shares.length,
+      collect_count: collects?.n ?? 0,
+    }),
     shares: shares.map((row) => ({
       handle: row.handle,
       name: row.name,
@@ -324,16 +332,22 @@ function publishFail(err: unknown) {
 }
 
 function asTools(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value === "string" && value) {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    } catch {
-      return value.split(",").map((item) => item.trim()).filter(Boolean);
+  const raw = (() => {
+    if (Array.isArray(value)) return value.map(String);
+    if (typeof value === "string" && value) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch {
+        return value.split(",").map((item) => item.trim()).filter(Boolean);
+      }
     }
-  }
-  return [];
+    return [];
+  })();
+  return raw
+    .map((item) => item.trim().slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 workRoutes.post("/", requireAuth, async (c) => {

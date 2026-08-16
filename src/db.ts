@@ -157,6 +157,7 @@ export function publicWork(
     reposted_by?: string | null;
     reposted_by_name?: string | null;
     share_count?: number;
+    collect_count?: number;
     repost_caption?: string | null;
   },
 ) {
@@ -184,5 +185,6 @@ export function publicWork(
     repostedByName: work.reposted_by_name || undefined,
     repostCaption: work.repost_caption?.trim() || undefined,
     shareCount: work.share_count ?? 0,
+    collectCount: work.collect_count ?? 0,
   };
 }
