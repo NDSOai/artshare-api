@@ -21,15 +21,27 @@ export function isStorageReady() {
 
 function client() {
   if (!isStorageReady()) return null;
+  const region = !env.bucketRegion || env.bucketRegion === "auto" ? "us-east-1" : env.bucketRegion;
   return new S3Client({
-    region: env.bucketRegion || "auto",
+    region,
     endpoint: env.bucketEndpoint,
     forcePathStyle: true,
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: env.bucketAccessKey,
       secretAccessKey: env.bucketSecretKey,
     },
   });
+}
+
+function guessType(name: string, kind?: string) {
+  if (/\.jpe?g$/i.test(name)) return "image/jpeg";
+  if (/\.png$/i.test(name)) return "image/png";
+  if (/\.webp$/i.test(name)) return "image/webp";
+  if (/\.mp3$/i.test(name)) return "audio/mpeg";
+  if (/\.(m4a|aac)$/i.test(name)) return "audio/mp4";
+  return kind === "music" ? "audio/mpeg" : kind === "image" ? "image/jpeg" : "application/octet-stream";
 }
 
 export function publicMediaUrl(key: string | null | undefined) {
@@ -95,13 +107,14 @@ function extFor(type: string, kind: string) {
 }
 
 export function assertUpload(file: File, kind: string) {
+  const type = file.type || guessType(file.name, kind);
   if (kind === "image") {
-    if (!IMAGE_TYPES.has(file.type)) return "Use JPEG, PNG, or WebP, under 3MB.";
+    if (!IMAGE_TYPES.has(type) && type !== "image/jpg") return "Use JPEG, PNG, or WebP, under 3MB.";
     if (file.size > LIMITS.image) return "Photos must be under 3MB.";
     return null;
   }
   if (kind === "music") {
-    if (!AUDIO_TYPES.has(file.type)) return "Use MP3 or AAC, under 20MB.";
+    if (!AUDIO_TYPES.has(type) && type !== "application/octet-stream") return "Use MP3 or AAC, under 20MB.";
     if (file.size > LIMITS.music) return "Songs must be under 20MB.";
     return null;
   }
@@ -111,14 +124,15 @@ export function assertUpload(file: File, kind: string) {
 export async function putWorkFile(userId: string, workId: string, file: File, kind: string) {
   const s3 = client();
   if (!s3) throw new Error("File storage is not ready yet.");
-  const key = `works/${userId}/${workId}.${extFor(file.type, kind)}`;
+  const type = file.type || guessType(file.name, kind);
+  const key = `works/${userId}/${workId}.${extFor(type, kind)}`;
   const body = Buffer.from(await file.arrayBuffer());
   await s3.send(
     new PutObjectCommand({
       Bucket: env.bucketName,
       Key: key,
       Body: body,
-      ContentType: file.type || (kind === "music" ? "audio/mpeg" : "image/jpeg"),
+      ContentType: type || (kind === "music" ? "audio/mpeg" : "image/jpeg"),
     }),
   );
   return key;

@@ -196,12 +196,29 @@ workRoutes.get("/:id", async (c) => {
   });
 });
 
+function guessUploadType(name: string) {
+  if (/\.jpe?g$/i.test(name)) return "image/jpeg";
+  if (/\.png$/i.test(name)) return "image/png";
+  if (/\.webp$/i.test(name)) return "image/webp";
+  if (/\.mp3$/i.test(name)) return "audio/mpeg";
+  if (/\.(m4a|aac)$/i.test(name)) return "audio/mp4";
+  return "";
+}
+
 function asUpload(value: unknown): File | null {
-  if (value instanceof File && value.size > 0) return value;
-  if (typeof Blob !== "undefined" && value instanceof Blob && value.size > 0) {
-    return new File([value], "upload", { type: value.type || "application/octet-stream" });
+  if (!value || typeof value !== "object") return null;
+  const blob = value as Blob & { name?: string; size?: number; arrayBuffer?: () => Promise<ArrayBuffer> };
+  if (typeof blob.size !== "number" || blob.size <= 0 || typeof blob.arrayBuffer !== "function") return null;
+  const name = typeof blob.name === "string" && blob.name ? blob.name : "upload";
+  const type = blob.type || guessUploadType(name) || "application/octet-stream";
+  if (value instanceof File) {
+    return value.type ? value : new File([value], name, { type });
   }
-  return null;
+  try {
+    return new File([value as Blob], name, { type });
+  } catch {
+    return value as File;
+  }
 }
 
 function asTools(value: unknown): string[] {

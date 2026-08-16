@@ -29,6 +29,26 @@ export async function areMutual(a: string, b: string) {
   return Boolean(row?.ok);
 }
 
+followRoutes.get("/", requireAuth, async (c) => {
+  const me = c.get("user");
+  const following = await sql<{ handle: string }[]>`
+    select u.handle from follows f
+    join users u on u.id = f.followee_id
+    where f.follower_id = ${me.id}
+    order by f.created_at desc
+  `;
+  const followers = await sql<{ handle: string }[]>`
+    select u.handle from follows f
+    join users u on u.id = f.follower_id
+    where f.followee_id = ${me.id}
+    order by f.created_at desc
+  `;
+  return c.json({
+    following: following.map((row) => row.handle),
+    followers: followers.map((row) => row.handle),
+  });
+});
+
 followRoutes.get("/:handle", requireAuth, async (c) => {
   const me = c.get("user");
   const them = await findUser(c.req.param("handle"));
@@ -68,7 +88,8 @@ followRoutes.post("/:handle", requireAuth, async (c) => {
       text: "followed you",
     });
   }
-  return c.json({ following: true, mutual: await areMutual(me.id, them.id) });
+  const followedBy = await isFollowing(them.id, me.id);
+  return c.json({ following: true, followedBy, mutual: followedBy });
 });
 
 followRoutes.delete("/:handle", requireAuth, async (c) => {
