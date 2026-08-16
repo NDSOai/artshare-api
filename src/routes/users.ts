@@ -251,9 +251,9 @@ userRoutes.get("/:handle", async (c) => {
     where w.artist_id = ${user.id}
     order by w.created_at desc
   `;
-  const reposts = await sql<(WorkRow & { reposted_by: string; reposted_by_name: string })[]>`
+  const reposts = await sql<(WorkRow & { reposted_by: string; reposted_by_name: string; repost_caption: string })[]>`
     select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
-           ${user.handle} as reposted_by, ${user.name} as reposted_by_name
+           ${user.handle} as reposted_by, ${user.name} as reposted_by_name, r.caption as repost_caption
     from reposts r
     join works w on w.id = r.work_id
     join users u on u.id = w.artist_id

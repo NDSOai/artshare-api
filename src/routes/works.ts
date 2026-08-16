@@ -27,9 +27,9 @@ workRoutes.get("/", async (c) => {
       order by w.created_at desc
       limit 80
     `;
-    const boosted = await sql<(WorkRow & { reposted_by: string; reposted_by_name: string })[]>`
+    const boosted = await sql<(WorkRow & { reposted_by: string; reposted_by_name: string; repost_caption: string })[]>`
       select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
-             ru.handle as reposted_by, ru.name as reposted_by_name
+             ru.handle as reposted_by, ru.name as reposted_by_name, r.caption as repost_caption
       from reposts r
       join works w on w.id = r.work_id
       join users u on u.id = w.artist_id
@@ -96,9 +96,15 @@ workRoutes.delete("/:id/like", requireAuth, async (c) => {
   return c.json({ liked: false, count: count.n });
 });
 
+function asCaption(value: unknown) {
+  return String(value ?? "").trim().slice(0, 280);
+}
+
 workRoutes.post("/:id/repost", requireAuth, async (c) => {
   const user = c.get("user");
   const workId = c.req.param("id");
+  const body = await c.req.json<{ caption?: string }>().catch(() => ({} as { caption?: string }));
+  const caption = asCaption(body.caption);
   const [work] = await sql<{ id: string; artist_id: string; title: string }[]>`
     select id, artist_id, title from works where id = ${workId} limit 1
   `;
@@ -106,21 +112,24 @@ workRoutes.post("/:id/repost", requireAuth, async (c) => {
   if (work.artist_id === user.id) {
     return c.json({ error: "That's already on your profile." }, 400);
   }
-  const inserted = await sql<{ user_id: string }[]>`
-    insert into reposts (user_id, work_id) values (${user.id}, ${work.id})
-    on conflict do nothing
-    returning user_id
+  const [existing] = await sql<{ user_id: string }[]>`
+    select user_id from reposts where user_id = ${user.id} and work_id = ${work.id} limit 1
   `;
-  if (inserted[0]) {
-    await notify({
-      userId: work.artist_id,
-      fromId: user.id,
-      workId: work.id,
-      type: "repost",
-      text: `shared ${work.title}`,
-    });
+  if (existing) {
+    await sql`update reposts set caption = ${caption} where user_id = ${user.id} and work_id = ${work.id}`;
+    return c.json({ reposted: true, caption });
   }
-  return c.json({ reposted: true });
+  await sql`
+    insert into reposts (user_id, work_id, caption) values (${user.id}, ${work.id}, ${caption})
+  `;
+  await notify({
+    userId: work.artist_id,
+    fromId: user.id,
+    workId: work.id,
+    type: "repost",
+    text: `shared ${work.title}`,
+  });
+  return c.json({ reposted: true, caption });
 });
 
 workRoutes.delete("/:id/repost", requireAuth, async (c) => {
@@ -133,10 +142,10 @@ workRoutes.delete("/:id/repost", requireAuth, async (c) => {
 workRoutes.get("/:id/repost", requireAuth, async (c) => {
   const user = c.get("user");
   const workId = c.req.param("id");
-  const [mine] = await sql<{ n: number }[]>`
-    select count(*)::int as n from reposts where user_id = ${user.id} and work_id = ${workId}
+  const [mine] = await sql<{ caption: string }[]>`
+    select caption from reposts where user_id = ${user.id} and work_id = ${workId} limit 1
   `;
-  return c.json({ reposted: mine.n > 0 });
+  return c.json({ reposted: Boolean(mine), caption: mine?.caption ?? "" });
 });
 
 workRoutes.get("/:id/like", requireAuth, async (c) => {
@@ -159,7 +168,26 @@ workRoutes.get("/:id", async (c) => {
   `;
   if (!work) return c.json({ error: "Work not found." }, 404);
   await sql`update works set views = views + 1 where id = ${work.id}`;
-  return c.json({ work: publicWork({ ...work, views: work.views + 1 }) });
+  const shares = await sql<{ handle: string; name: string; caption: string; created_at: Date }[]>`
+    select u.handle, u.name, r.caption, r.created_at
+    from reposts r
+    join users u on u.id = r.user_id
+    where r.work_id = ${work.id}
+    order by r.created_at desc
+    limit 40
+  `;
+  const [count] = await sql<{ n: number }[]>`
+    select count(*)::int as n from reposts where work_id = ${work.id}
+  `;
+  return c.json({
+    work: publicWork({ ...work, views: work.views + 1, share_count: count?.n ?? shares.length }),
+    shares: shares.map((row) => ({
+      handle: row.handle,
+      name: row.name,
+      caption: row.caption?.trim() || undefined,
+      at: row.created_at.toISOString(),
+    })),
+  });
 });
 
 workRoutes.post("/", requireAuth, async (c) => {

@@ -139,7 +139,12 @@ export function publicArtist(user: UserRow) {
 }
 
 export function publicWork(
-  work: WorkRow & { reposted_by?: string | null; reposted_by_name?: string | null },
+  work: WorkRow & {
+    reposted_by?: string | null;
+    reposted_by_name?: string | null;
+    share_count?: number;
+    repost_caption?: string | null;
+  },
 ) {
   return {
     id: work.id,
@@ -163,5 +168,7 @@ export function publicWork(
     body: work.body ?? undefined,
     repostedBy: work.reposted_by || undefined,
     repostedByName: work.reposted_by_name || undefined,
+    repostCaption: work.repost_caption?.trim() || undefined,
+    shareCount: work.share_count ?? 0,
   };
 }

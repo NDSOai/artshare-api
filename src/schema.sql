@@ -106,6 +106,7 @@ create table if not exists collection_works (
 alter table collection_works add column if not exists created_at timestamptz not null default now();
 alter table likes add column if not exists created_at timestamptz not null default now();
 alter table reposts add column if not exists created_at timestamptz not null default now();
+alter table reposts add column if not exists caption text not null default '';
 
 create table if not exists notifications (
   id text primary key,
