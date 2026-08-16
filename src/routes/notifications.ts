@@ -45,6 +45,35 @@ notificationRoutes.get("/", async (c) => {
 
 notificationRoutes.post("/read", async (c) => {
   const me = c.get("user");
-  await sql`update notifications set read = true where user_id = ${me.id} and read = false`;
+  const body = (await c.req.json().catch(() => ({}))) as {
+    type?: unknown;
+    fromHandle?: unknown;
+  };
+  const type = typeof body.type === "string" && body.type.trim() ? body.type.trim() : null;
+  const fromHandle =
+    typeof body.fromHandle === "string" && body.fromHandle.trim()
+      ? body.fromHandle.trim().toLowerCase()
+      : null;
+
+  if (type && fromHandle) {
+    await sql`
+      update notifications n
+      set read = true
+      from users u
+      where n.user_id = ${me.id}
+        and n.read = false
+        and n.type = ${type}
+        and n.from_id = u.id
+        and lower(u.handle) = ${fromHandle}
+    `;
+  } else if (type) {
+    await sql`
+      update notifications
+      set read = true
+      where user_id = ${me.id} and read = false and type = ${type}
+    `;
+  } else {
+    await sql`update notifications set read = true where user_id = ${me.id} and read = false`;
+  }
   return c.json({ ok: true });
 });
