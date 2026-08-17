@@ -353,7 +353,7 @@ function asTools(value: unknown): string[] {
 workRoutes.post("/", requireAuth, async (c) => {
   const user = c.get("user");
   try {
-  const tooSoon = await assertCooldown(await lastWorkAt(user.id), 60 * 60 * 1000, "publish");
+  const tooSoon = await assertCooldown(await lastWorkAt(user.id), 20 * 60 * 1000, "publish");
   if (tooSoon) return limited(c, tooSoon);
   const contentType = c.req.header("content-type") || "";
   let captchaToken = "";
