@@ -5,10 +5,13 @@ import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js
 import { isFollowing } from "./follows.js";
 import { isStorageReady, ownMediaKey, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
 import { displayInviteCode, unusedInviteCodes } from "../lib/invites.js";
+import { limitPublicGet } from "../lib/rate-limit.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
 userRoutes.get("/", async (c) => {
+  const blocked = limitPublicGet(c, "users-search", 90);
+  if (blocked) return blocked;
   const q = (c.req.query("q") || "").trim().replace(/^@+/, "").replace(/[%_]/g, "").slice(0, 80);
   const users = q
     ? await sql<UserRow[]>`
@@ -289,6 +292,8 @@ userRoutes.get("/me/portfolio", requireAuth, async (c) => {
 });
 
 userRoutes.get("/:handle", async (c) => {
+  const blocked = limitPublicGet(c, "users-get", 90);
+  if (blocked) return blocked;
   const handle = c.req.param("handle").toLowerCase();
   const [user] = await sql<UserRow[]>`select * from users where lower(handle) = ${handle} limit 1`;
   if (!user) return c.json({ error: "Artist not found." }, 404);

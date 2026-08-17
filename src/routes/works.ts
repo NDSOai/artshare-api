@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
-import { assertCooldown, lastRepostAt, lastWorkAt, limited, repostsLastHour } from "../lib/rate-limit.js";
+import { assertCooldown, lastRepostAt, lastWorkAt, limited, limitPublicGet, repostsLastHour } from "../lib/rate-limit.js";
 import { parseMultipart, type FormFile } from "../lib/multipart.js";
 import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
 import { consumeCaptcha } from "../lib/captcha.js";
@@ -15,6 +15,8 @@ function clip(value: string, max: number) {
 }
 
 workRoutes.get("/", async (c) => {
+  const blocked = limitPublicGet(c, "works-list", 120);
+  if (blocked) return blocked;
   const q = (c.req.query("q") || "").trim().replace(/[%_]/g, "").slice(0, 80);
   const medium = (c.req.query("medium") || "").trim();
   const kind = (c.req.query("kind") || "").trim();
@@ -240,6 +242,8 @@ workRoutes.delete("/:id", requireAuth, async (c) => {
 });
 
 workRoutes.get("/:id", async (c) => {
+  const blocked = limitPublicGet(c, "works-get", 120);
+  if (blocked) return blocked;
   const [work] = await sql<WorkRow[]>`
     select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
     from works w

@@ -1,9 +1,12 @@
 import { Hono } from "hono";
 import { getWorkFile, isSafeMediaKey, isStorageReady } from "../lib/storage.js";
+import { limitPublicGet } from "../lib/rate-limit.js";
 
 export const mediaRoutes = new Hono();
 
 mediaRoutes.get("/*", async (c) => {
+  const blocked = limitPublicGet(c, "media", 600);
+  if (blocked) return blocked;
   const key = c.req.path.replace(/^\/media\/?/, "");
   if (!isStorageReady()) return c.json({ error: "File storage is not ready yet." }, 503);
   if (!key || !isSafeMediaKey(key)) return c.json({ error: "Work not found." }, 404);
@@ -16,6 +19,7 @@ mediaRoutes.get("/*", async (c) => {
       headers: {
         "Content-Type": obj.ContentType || "application/octet-stream",
         "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noai, noimageai",
         "Cache-Control": "public, max-age=31536000, immutable",
       },
     });

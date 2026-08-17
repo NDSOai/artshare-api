@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { sql } from "../db.js";
+import { isAiCrawler } from "./ai-crawlers.js";
 
 const ipHits = new Map<string, number[]>();
 
@@ -128,4 +129,15 @@ export async function repostsLastHour(userId: string) {
 export function limited(c: Context, err: { error: string; retryAfter: number }) {
   c.header("Retry-After", String(err.retryAfter));
   return c.json({ error: err.error }, 429);
+}
+
+/** Generous IP cap plus a hard no for known training crawlers. Memory only, so images stay fast. */
+export function limitPublicGet(c: Context, bucket: string, max: number, windowMs = 60_000) {
+  const ua = c.req.header("user-agent") || "";
+  if (isAiCrawler(ua)) {
+    return c.json({ error: "Automated copying of works is not allowed." }, 403);
+  }
+  const err = hitIp(`${bucket}:${clientIp(c)}`, max, windowMs, "try");
+  if (err) return limited(c, err);
+  return null;
 }

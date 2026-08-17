@@ -19,6 +19,7 @@ import { backfillFavoriteCollections } from "./lib/collections.js";
 import { initMessageCrypto } from "./lib/crypto-message.js";
 import { backfillInvitePacks } from "./lib/invites.js";
 import { rekeyMessages } from "./lib/message-purge.js";
+import { robotsTxt } from "./lib/ai-crawlers.js";
 
 const app = new Hono();
 
@@ -51,6 +52,9 @@ app.use(
 
 app.get("/health", (c) =>
   c.json({ ok: true, service: "artshare-api", storage: isStorageReady(), publish: "buffer" }),
+);
+app.get("/robots.txt", (c) =>
+  c.text(robotsTxt(), 200, { "Content-Type": "text/plain; charset=utf-8" }),
 );
 
 app.onError((err, c) => {
