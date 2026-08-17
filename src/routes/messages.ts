@@ -81,12 +81,15 @@ messageRoutes.get("/:handle", async (c) => {
     return c.json({ error: "You both need to follow each other to chat." }, 403);
   }
   try {
+  const sinceMs = Number(c.req.query("since") || 0);
+  const sinceAt = Number.isFinite(sinceMs) && sinceMs > 0 ? new Date(sinceMs) : null;
   const rows = await sql<MessageRow[]>`
     select m.*, s.handle as sender_handle
     from messages m
     join users s on s.id = m.sender_id
-    where (m.sender_id = ${me.id} and m.recipient_id = ${them.id})
-       or (m.sender_id = ${them.id} and m.recipient_id = ${me.id})
+    where ((m.sender_id = ${me.id} and m.recipient_id = ${them.id})
+       or (m.sender_id = ${them.id} and m.recipient_id = ${me.id}))
+      and (${sinceAt}::timestamptz is null or m.created_at > ${sinceAt})
     order by m.created_at asc
   `;
   return c.json({
