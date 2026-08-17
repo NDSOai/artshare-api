@@ -4,6 +4,7 @@ import { isAdminEmail } from "../lib/admin.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { isFollowing } from "./follows.js";
 import { isStorageReady, ownMediaKey, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
+import { displayInviteCode, unusedInviteCodes } from "../lib/invites.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
@@ -199,6 +200,15 @@ userRoutes.patch("/me", requireAuth, async (c) => {
     }
     return c.json({ error: "Could not save your profile." }, 500);
   }
+});
+
+userRoutes.get("/me/invites", requireAuth, async (c) => {
+  const user = c.get("user");
+  const codes = await unusedInviteCodes(user.id);
+  return c.json({
+    codes: codes.map(displayInviteCode),
+    remaining: codes.length,
+  });
 });
 
 userRoutes.get("/me/cheers", requireAuth, async (c) => {

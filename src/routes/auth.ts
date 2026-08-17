@@ -10,6 +10,7 @@ import { env } from "../env.js";
 import { clientIp, hitIp, hitIpDurable, limited } from "../lib/rate-limit.js";
 import { cleanHandle, signupProblem } from "../lib/signup-guard.js";
 import { consumeCaptcha, issueCaptcha } from "../lib/captcha.js";
+import { grantAndEmailInvites, peekOpenInvite, redeemInvite } from "../lib/invites.js";
 
 export const authRoutes = new Hono<{ Variables: Authed }>();
 
@@ -27,6 +28,7 @@ authRoutes.post("/signup", async (c) => {
     password?: string;
     handle?: string;
     name?: string;
+    inviteCode?: string;
     captchaToken?: string;
     captchaAnswer?: string;
   }>();
@@ -36,6 +38,7 @@ authRoutes.post("/signup", async (c) => {
   const name = (body.name || "").trim();
   const handle = cleanHandle(body.handle || "");
   const password = body.password || "";
+  const inviteCode = body.inviteCode || "";
   const badPassword = passwordProblem(password);
   const badSignup = signupProblem({ email, name, handle });
 
@@ -44,6 +47,10 @@ authRoutes.post("/signup", async (c) => {
       { error: badPassword || badSignup || "Name, handle, email, and a password of at least 10 characters are required." },
       400,
     );
+  }
+
+  if (env.inviteOnly && !(await peekOpenInvite(inviteCode))) {
+    return c.json({ error: "That invite is not valid." }, 400);
   }
 
   const [takenHandle] = await sql<UserRow[]>`
@@ -62,10 +69,15 @@ authRoutes.post("/signup", async (c) => {
   }
 
   const token = generateToken();
+  const userId = newId("user");
   await sql`
     insert into users (id, handle, name, email, password_hash, email_verification_token, email_verification_expires_at)
-    values (${newId("user")}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${token}, now() + interval '48 hours')
+    values (${userId}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${token}, now() + interval '48 hours')
   `;
+  if (env.inviteOnly && !(await redeemInvite(inviteCode, userId))) {
+    await sql`delete from users where id = ${userId}`;
+    return c.json({ error: "That invite is not valid." }, 400);
+  }
 
   const confirmationUrl = `${env.frontendUrl}/confirm-email?token=${token}`;
   try {
@@ -125,6 +137,12 @@ authRoutes.post("/confirm-email", async (c) => {
     where id = ${user.id}
     returning *
   `;
+
+  try {
+    await grantAndEmailInvites(next);
+  } catch (err) {
+    console.error("[confirm-email] invite pack failed", err);
+  }
 
   return c.json({
     message: "Email confirmed!",

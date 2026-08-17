@@ -44,4 +44,5 @@ export const env = {
     .split(",")
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
+  inviteOnly: !["0", "false", "off"].includes((process.env.INVITE_ONLY || "true").toLowerCase()),
 };

@@ -34,6 +34,7 @@ alter table users add column if not exists banner_position smallint not null def
 alter table users add column if not exists moderation_on boolean not null default false;
 alter table users add column if not exists token_version integer not null default 0;
 alter table users add column if not exists email_verification_expires_at timestamptz;
+alter table users add column if not exists invites_emailed_at timestamptz;
 
 create table if not exists rate_hits (
   key text not null,
@@ -141,3 +142,14 @@ create table if not exists reposts (
 
 alter table reposts add column if not exists created_at timestamptz not null default now();
 alter table reposts add column if not exists caption text not null default '';
+
+create table if not exists invite_codes (
+  code text primary key,
+  issuer_id text not null references users(id) on delete cascade,
+  redeemed_by text references users(id) on delete set null,
+  redeemed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists invite_codes_issuer_idx on invite_codes (issuer_id);
+create index if not exists invite_codes_open_idx on invite_codes (code) where redeemed_at is null;
