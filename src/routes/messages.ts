@@ -5,6 +5,7 @@ import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { assertCooldown, lastMessageAt, limited, messagesLastHour } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
+import { publicMediaUrl } from "../lib/storage.js";
 import { areMutual } from "./follows.js";
 
 export const messageRoutes = new Hono<{ Variables: Authed }>();
@@ -44,12 +45,13 @@ messageRoutes.use("*", requireAuth);
 messageRoutes.get("/", async (c) => {
   const me = c.get("user");
   try {
-  const rows = await sql<(MessageRow & { other_handle: string; other_name: string })[]>`
+  const rows = await sql<(MessageRow & { other_handle: string; other_name: string; other_photo: string | null })[]>`
     select distinct on (least(m.sender_id, m.recipient_id), greatest(m.sender_id, m.recipient_id))
       m.*,
       s.handle as sender_handle,
       case when m.sender_id = ${me.id} then r.handle else s.handle end as other_handle,
-      case when m.sender_id = ${me.id} then r.name else s.name end as other_name
+      case when m.sender_id = ${me.id} then r.name else s.name end as other_name,
+      case when m.sender_id = ${me.id} then r.photo_url else s.photo_url end as other_photo
     from messages m
     join users s on s.id = m.sender_id
     join users r on r.id = m.recipient_id
@@ -61,6 +63,7 @@ messageRoutes.get("/", async (c) => {
       id: row.other_handle,
       handle: row.other_handle,
       name: row.other_name,
+      photoUrl: publicMediaUrl(row.other_photo),
       last: open(row),
     })),
   });
@@ -88,6 +91,8 @@ messageRoutes.get("/:handle", async (c) => {
   `;
   return c.json({
     handle: them.handle,
+    name: them.name,
+    photoUrl: publicMediaUrl(them.photo_url),
     messages: rows.map(open),
   });
   } catch (err) {

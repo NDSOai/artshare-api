@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { sql } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { publicMediaUrl } from "../lib/storage.js";
 
 export const notificationRoutes = new Hono<{ Variables: Authed }>();
 
@@ -17,11 +18,12 @@ notificationRoutes.get("/", async (c) => {
       created_at: Date;
       from_name: string | null;
       from_handle: string | null;
+      from_photo: string | null;
       work_id: string | null;
     }[]
   >`
     select n.id, n.type, n.text, n.read, n.created_at, n.work_id,
-           u.name as from_name, u.handle as from_handle
+           u.name as from_name, u.handle as from_handle, u.photo_url as from_photo
     from notifications n
     left join users u on u.id = n.from_id
     where n.user_id = ${me.id}
@@ -35,6 +37,7 @@ notificationRoutes.get("/", async (c) => {
       type: row.type,
       from: row.from_name ?? "Someone",
       fromHandle: row.from_handle ?? "",
+      fromPhoto: publicMediaUrl(row.from_photo),
       text: row.text,
       workId: row.work_id,
       time: row.created_at.toISOString(),
