@@ -15,6 +15,7 @@ import { workRoutes } from "./routes/works.js";
 import { collectionRoutes } from "./routes/collections.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { adminRoutes } from "./routes/admin.js";
+import { backfillFavoriteCollections } from "./lib/collections.js";
 import { backfillInvitePacks } from "./lib/invites.js";
 import { purgeUnreadableMessages } from "./lib/message-purge.js";
 
@@ -74,6 +75,8 @@ await migrate();
 
 serve({ fetch: app.fetch, port: env.port, overrideGlobalObjects: true }, (info) => {
   console.log(`artshare-api listening on ${info.port}`);
-  void purgeUnreadableMessages().then(() => backfillInvitePacks());
+  void purgeUnreadableMessages()
+    .then(() => backfillInvitePacks())
+    .then(() => backfillFavoriteCollections());
 });
 

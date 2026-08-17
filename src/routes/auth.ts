@@ -11,6 +11,7 @@ import { clientIp, hitIp, hitIpDurable, limited } from "../lib/rate-limit.js";
 import { cleanHandle, signupProblem } from "../lib/signup-guard.js";
 import { consumeCaptcha, issueCaptcha } from "../lib/captcha.js";
 import { grantAndEmailInvites, peekOpenInvite, redeemInvite } from "../lib/invites.js";
+import { ensureFavorites } from "../lib/collections.js";
 
 export const authRoutes = new Hono<{ Variables: Authed }>();
 
@@ -78,6 +79,7 @@ authRoutes.post("/signup", async (c) => {
     await sql`delete from users where id = ${userId}`;
     return c.json({ error: "That invite is not valid." }, 400);
   }
+  await ensureFavorites(userId);
 
   const confirmationUrl = `${env.frontendUrl}/confirm-email?token=${token}`;
   try {

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { publicWork, sql, type WorkRow } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { ensureFavorites, isFavoritesName } from "../lib/collections.js";
 import { notify } from "../lib/notify.js";
 import { newId } from "../lib/tokens.js";
 
@@ -10,13 +11,14 @@ collectionRoutes.use("*", requireAuth);
 
 collectionRoutes.get("/", async (c) => {
   const me = c.get("user");
+  await ensureFavorites(me.id);
   const rows = await sql<{ id: string; name: string; cover_color: string; n: number }[]>`
     select c.id, c.name, c.cover_color, count(cw.work_id)::int as n
     from collections c
     left join collection_works cw on cw.collection_id = c.id
     where c.owner_id = ${me.id}
     group by c.id
-    order by c.created_at desc
+    order by (lower(c.name) = 'favorites') desc, c.created_at desc
   `;
   return c.json({
     collections: rows.map((row) => ({
@@ -24,6 +26,7 @@ collectionRoutes.get("/", async (c) => {
       name: row.name,
       coverColor: row.cover_color,
       workCount: row.n,
+      locked: isFavoritesName(row.name),
     })),
   });
 });
@@ -32,12 +35,31 @@ collectionRoutes.post("/", async (c) => {
   const me = c.get("user");
   const body = await c.req.json<{ name?: string }>();
   const name = (body.name || "").trim().slice(0, 60) || "Untitled";
+  if (isFavoritesName(name)) {
+    const id = await ensureFavorites(me.id);
+    const [row] = await sql<{ id: string; name: string; cover_color: string; n: number }[]>`
+      select c.id, c.name, c.cover_color, count(cw.work_id)::int as n
+      from collections c
+      left join collection_works cw on cw.collection_id = c.id
+      where c.id = ${id}
+      group by c.id
+    `;
+    return c.json({
+      collection: {
+        id: row.id,
+        name: row.name,
+        coverColor: row.cover_color,
+        workCount: row.n,
+        locked: true,
+      },
+    });
+  }
   const [row] = await sql<{ id: string; name: string; cover_color: string }[]>`
     insert into collections (id, owner_id, name)
     values (${newId("col")}, ${me.id}, ${name})
     returning id, name, cover_color
   `;
-  return c.json({ collection: { id: row.id, name: row.name, coverColor: row.cover_color, workCount: 0 } }, 201);
+  return c.json({ collection: { id: row.id, name: row.name, coverColor: row.cover_color, workCount: 0, locked: false } }, 201);
 });
 
 collectionRoutes.get("/:id", async (c) => {
@@ -59,7 +81,13 @@ collectionRoutes.get("/:id", async (c) => {
     order by cw.created_at desc
   `;
   return c.json({
-    collection: { id: col.id, name: col.name, coverColor: col.cover_color, owner: col.owner_name },
+    collection: {
+      id: col.id,
+      name: col.name,
+      coverColor: col.cover_color,
+      owner: col.owner_name,
+      locked: isFavoritesName(col.name),
+    },
     works: works.map(publicWork),
   });
 });
@@ -92,4 +120,17 @@ collectionRoutes.post("/:id/works", async (c) => {
     });
   }
   return c.json({ saved: true });
+});
+
+collectionRoutes.delete("/:id", async (c) => {
+  const me = c.get("user");
+  const [col] = await sql<{ id: string; name: string }[]>`
+    select id, name from collections where id = ${c.req.param("id")} and owner_id = ${me.id} limit 1
+  `;
+  if (!col) return c.json({ error: "Collection not found." }, 404);
+  if (isFavoritesName(col.name)) {
+    return c.json({ error: "Favorites stays on your account." }, 400);
+  }
+  await sql`delete from collections where id = ${col.id} and owner_id = ${me.id}`;
+  return c.json({ deleted: true });
 });
