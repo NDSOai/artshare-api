@@ -106,6 +106,9 @@ create table if not exists collections (
   owner_id text not null references users(id) on delete cascade,
   name text not null,
   cover_color text not null default '#121612',
+  description text not null default '',
+  tags jsonb not null default '[]'::jsonb,
+  sort_order integer not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -113,10 +116,15 @@ create table if not exists collection_works (
   collection_id text not null references collections(id) on delete cascade,
   work_id text not null references works(id) on delete cascade,
   created_at timestamptz not null default now(),
+  sort_order integer not null default 0,
   primary key (collection_id, work_id)
 );
 
 alter table collection_works add column if not exists created_at timestamptz not null default now();
+alter table collection_works add column if not exists sort_order integer not null default 0;
+alter table collections add column if not exists description text not null default '';
+alter table collections add column if not exists tags jsonb not null default '[]'::jsonb;
+alter table collections add column if not exists sort_order integer not null default 0;
 alter table likes add column if not exists created_at timestamptz not null default now();
 
 create table if not exists notifications (

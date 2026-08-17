@@ -22,8 +22,6 @@ authRoutes.get("/captcha", async (c) => {
 });
 
 authRoutes.post("/signup", async (c) => {
-  const ipLimit = await hitIpDurable(`signup:${clientIp(c)}`, 3, 60 * 60 * 1000, "create another account");
-  if (ipLimit) return limited(c, ipLimit);
   const body = await c.req.json<{
     email?: string;
     password?: string;
@@ -67,6 +65,14 @@ authRoutes.post("/signup", async (c) => {
       { message: "Signup successful! Check your email to confirm your account." },
       201,
     );
+  }
+
+  const ipLimit = await hitIpDurable(`signup:${clientIp(c)}`, 3, 60 * 60 * 1000, "try again");
+  if (ipLimit) {
+    return limited(c, {
+      ...ipLimit,
+      error: "Too many sign-up tries from this network. Wait a little and try again.",
+    });
   }
 
   const token = generateToken();
