@@ -16,8 +16,9 @@ import { collectionRoutes } from "./routes/collections.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { adminRoutes } from "./routes/admin.js";
 import { backfillFavoriteCollections } from "./lib/collections.js";
+import { initMessageCrypto } from "./lib/crypto-message.js";
 import { backfillInvitePacks } from "./lib/invites.js";
-import { purgeUnreadableMessages } from "./lib/message-purge.js";
+import { rekeyMessages } from "./lib/message-purge.js";
 
 const app = new Hono();
 
@@ -72,10 +73,11 @@ app.route("/notifications", notificationRoutes);
 app.notFound((c) => c.json({ error: "Not found." }, 404));
 
 await migrate();
+await initMessageCrypto();
 
 serve({ fetch: app.fetch, port: env.port, overrideGlobalObjects: true }, (info) => {
   console.log(`artshare-api listening on ${info.port}`);
-  void purgeUnreadableMessages()
+  void rekeyMessages()
     .then(() => backfillInvitePacks())
     .then(() => backfillFavoriteCollections());
 });

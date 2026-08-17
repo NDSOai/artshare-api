@@ -21,7 +21,7 @@ Needs Postgres. Railway can provide `DATABASE_URL`.
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres |
 | `JWT_SECRET` | yes | Session tokens |
-| `MESSAGE_SECRET` | yes | Encrypts chat bodies at rest |
+| `MESSAGE_SECRET` | first boot | Seeds chat encryption once, then ignored. Do not regenerate. |
 | `FRONTEND_URL` | yes in prod | Confirm / reset links, CORS |
 | `RESEND_API_KEY` | for mail | Without it, links log to stdout |
 | `RESEND_FROM` | no | Defaults to Resend onboarding sender |
@@ -57,7 +57,7 @@ Matches `lib/api.ts` on the frontend.
 
 Signup does not return a session. Confirm email first. Chat requires a mutual follow.
 
-Messages use AES-256-GCM on the server. This is encryption at rest, not end-to-end. Anyone with `MESSAGE_SECRET` can read them.
+Messages use AES-256-GCM on the server. The key is stored in Postgres after the first boot so deploys cannot rotate it. This is encryption at rest, not end-to-end.
 
 ## Point Railway at this repo
 
@@ -69,7 +69,7 @@ I cannot change the Railway service from here. In the Railway dashboard:
 4. Connect **GitHub → NDSOai/artshare-api → `main`**
 5. Root directory: `/` (this repo is the API)
 6. Keep or add variables: `DATABASE_URL`, `JWT_SECRET`, `MESSAGE_SECRET`, `FRONTEND_URL`, `RESEND_API_KEY`
-7. Generate `JWT_SECRET` and `MESSAGE_SECRET` if they do not exist yet
+7. Set `JWT_SECRET` and `MESSAGE_SECRET` once. Do not generate new values on later deploys.
 8. Deploy
 
 Then set `NEXT_PUBLIC_API_URL` on the frontend service to this API’s public domain.

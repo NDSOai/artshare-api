@@ -153,3 +153,8 @@ create table if not exists invite_codes (
 
 create index if not exists invite_codes_issuer_idx on invite_codes (issuer_id);
 create index if not exists invite_codes_open_idx on invite_codes (code) where redeemed_at is null;
+
+create table if not exists app_kv (
+  key text primary key,
+  value text not null
+);

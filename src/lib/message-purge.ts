@@ -1,13 +1,20 @@
 import { sql } from "../db.js";
-import { decryptBody } from "./crypto-message.js";
+import { decryptBody, encryptBody, needsRekey } from "./crypto-message.js";
 
-/** Log decrypt failures. Never delete — a secret mismatch used to wipe chat history on deploy. */
-export async function purgeUnreadableMessages() {
+/** Rewrite rows encrypted with an old env secret onto the pinned database key. Never delete. */
+export async function rekeyMessages() {
   const rows = await sql<{ id: string; body_enc: string }[]>`select id, body_enc from messages`;
-  const bad = rows.filter((row) => !decryptBody(row.body_enc)).map((row) => row.id);
-  if (bad.length === 0) {
-    console.log(`[messages] ${rows.length} readable`);
-    return;
+  let rekeyed = 0;
+  let unreadable = 0;
+  for (const row of rows) {
+    const text = decryptBody(row.body_enc);
+    if (!text) {
+      unreadable += 1;
+      continue;
+    }
+    if (!needsRekey(row.body_enc, text)) continue;
+    await sql`update messages set body_enc = ${encryptBody(text)} where id = ${row.id}`;
+    rekeyed += 1;
   }
-  console.warn(`[messages] ${bad.length} of ${rows.length} could not decrypt; leaving them in place`);
+  console.log(`[messages] ${rows.length} stored, ${rekeyed} rekeyed, ${unreadable} still unreadable`);
 }
