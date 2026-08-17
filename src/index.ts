@@ -16,6 +16,7 @@ import { collectionRoutes } from "./routes/collections.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { adminRoutes } from "./routes/admin.js";
 import { backfillInvitePacks } from "./lib/invites.js";
+import { purgeUnreadableMessages } from "./lib/message-purge.js";
 
 const app = new Hono();
 
@@ -73,6 +74,6 @@ await migrate();
 
 serve({ fetch: app.fetch, port: env.port, overrideGlobalObjects: true }, (info) => {
   console.log(`artshare-api listening on ${info.port}`);
-  void backfillInvitePacks();
+  void purgeUnreadableMessages().then(() => backfillInvitePacks());
 });
 
