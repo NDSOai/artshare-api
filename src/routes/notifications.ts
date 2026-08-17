@@ -76,7 +76,11 @@ notificationRoutes.post("/read", async (c) => {
       where user_id = ${me.id} and read = false and type = ${type}
     `;
   } else {
-    await sql`update notifications set read = true where user_id = ${me.id} and read = false`;
+    await sql`
+      update notifications
+      set read = true
+      where user_id = ${me.id} and read = false and type <> 'message'
+    `;
   }
   return c.json({ ok: true });
 });
