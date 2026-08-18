@@ -4,6 +4,7 @@ import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { assertCooldown, commentsLastHour, lastCommentAt, limited } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
+import { cachePublic } from "../lib/http-cache.js";
 
 export const commentRoutes = new Hono<{ Variables: Authed }>();
 
@@ -60,6 +61,7 @@ commentRoutes.get("/:workId/comments", async (c) => {
     where c.work_id = ${c.req.param("workId")}
     order by c.created_at asc
   `;
+  cachePublic(c, 30, 120);
   return c.json({
     comments: rows.map(publicComment),
   });

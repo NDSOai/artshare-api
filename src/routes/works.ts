@@ -7,6 +7,7 @@ import { parseMultipart, type FormFile } from "../lib/multipart.js";
 import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
 import { consumeCaptcha } from "../lib/captcha.js";
 import { newId } from "../lib/tokens.js";
+import { cacheNone, cachePublic } from "../lib/http-cache.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
 
@@ -56,6 +57,7 @@ workRoutes.get("/", async (c) => {
       seen.add(work.id);
       return true;
     });
+    cacheNone(c);
     return c.json({ works: works.map(publicWork) });
   }
 
@@ -69,6 +71,7 @@ workRoutes.get("/", async (c) => {
     order by w.created_at desc
     limit 100
   `;
+  cachePublic(c, 60, 300);
   return c.json({ works: works.map(publicWork) });
 });
 
@@ -267,6 +270,7 @@ workRoutes.get("/:id", async (c) => {
   const [collects] = await sql<{ n: number }[]>`
     select count(*)::int as n from collection_works where work_id = ${work.id}
   `;
+  cachePublic(c, 120, 300);
   return c.json({
     work: publicWork({
       ...work,

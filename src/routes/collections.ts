@@ -5,6 +5,7 @@ import { ensureFavorites, isFavoritesName } from "../lib/collections.js";
 import { notify } from "../lib/notify.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
+import { cachePublic } from "../lib/http-cache.js";
 
 export const collectionRoutes = new Hono<{ Variables: Authed }>();
 
@@ -97,6 +98,7 @@ collectionRoutes.get("/search", async (c) => {
     order by c.created_at desc
     limit 40
   `;
+  cachePublic(c, 120);
   return c.json({ collections: rows.map((row) => publicCollection(row)) });
 });
 

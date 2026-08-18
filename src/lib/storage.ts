@@ -122,6 +122,26 @@ function sniffAudio(buf: Buffer) {
   return null;
 }
 
+async function packImage(buf: Buffer, type: string, maxEdge: number) {
+  try {
+    const { default: sharp } = await import("sharp");
+    const image = sharp(buf, { failOn: "none" }).rotate();
+    const meta = await image.metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+    if (width > maxEdge || height > maxEdge) {
+      image.resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true });
+    }
+    const bytes = await image.webp({ quality: 88, effort: 4 }).toBuffer();
+    if (bytes.length > 0 && bytes.length < buf.length) {
+      return { bytes, type: "image/webp" };
+    }
+  } catch {
+    // Keep the original file if compression fails or isn't smaller.
+  }
+  return { bytes: buf, type };
+}
+
 export function parseDataUrl(dataUrl: string) {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
   if (!match) return null;
@@ -135,9 +155,9 @@ export async function putAvatarFile(userId: string, file: { type: string; bytes:
   if (!isStorageReady()) throw new Error("File storage is not ready yet.");
   const sniffed = sniffImage(file.bytes);
   if (!sniffed) throw new Error("That photo could not be used.");
-  const ext = sniffed === "image/png" ? "png" : sniffed === "image/webp" ? "webp" : "jpg";
-  const key = `avatars/${userId}.${ext}`;
-  await putObject(key, file.bytes, sniffed);
+  const packed = await packImage(file.bytes, sniffed, 800);
+  const key = `avatars/${userId}.${extFor(packed.type, "image")}`;
+  await putObject(key, packed.bytes, packed.type);
   return key;
 }
 
@@ -145,9 +165,9 @@ export async function putBannerFile(userId: string, file: { type: string; bytes:
   if (!isStorageReady()) throw new Error("File storage is not ready yet.");
   const sniffed = sniffImage(file.bytes);
   if (!sniffed) throw new Error("That photo could not be used.");
-  const ext = sniffed === "image/png" ? "png" : sniffed === "image/webp" ? "webp" : "jpg";
-  const key = `banners/${userId}.${ext}`;
-  await putObject(key, file.bytes, sniffed);
+  const packed = await packImage(file.bytes, sniffed, 1920);
+  const key = `banners/${userId}.${extFor(packed.type, "image")}`;
+  await putObject(key, packed.bytes, packed.type);
   return key;
 }
 
@@ -190,8 +210,14 @@ export async function putWorkFile(userId: string, workId: string, file: UploadBl
   if (!sniffed) {
     throw new Error(kind === "music" ? "Use MP3 or AAC, under 20MB." : "Use JPEG, PNG, or WebP, under 3MB.");
   }
-  const key = `works/${userId}/${workId}.${extFor(sniffed, kind)}`;
-  await putObject(key, body, sniffed);
+  if (kind === "music") {
+    const key = `works/${userId}/${workId}.${extFor(sniffed, kind)}`;
+    await putObject(key, body, sniffed);
+    return key;
+  }
+  const packed = await packImage(body, sniffed, 2400);
+  const key = `works/${userId}/${workId}.${extFor(packed.type, kind)}`;
+  await putObject(key, packed.bytes, packed.type);
   return key;
 }
 

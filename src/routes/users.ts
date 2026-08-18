@@ -6,6 +6,7 @@ import { isFollowing } from "./follows.js";
 import { isStorageReady, ownMediaKey, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
 import { displayInviteCode, unusedInviteCodes } from "../lib/invites.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
+import { cacheNone, cachePublic } from "../lib/http-cache.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
@@ -27,6 +28,7 @@ userRoutes.get("/", async (c) => {
         order by created_at desc
         limit 40
       `;
+  cachePublic(c, 60);
   return c.json({ users: users.map((user) => veilAbout(publicArtist(user), false)) });
 });
 
@@ -319,6 +321,7 @@ userRoutes.get("/:handle", async (c) => {
   `;
   const me = viewer;
   const showAbout = Boolean(me && (me.id === user.id || (await isFollowing(me.id, user.id))));
+  cacheNone(c);
   return c.json({
     user: showAbout && me?.id === user.id ? publicUser(user) : undefined,
     artist: veilAbout(publicArtist(user), showAbout),

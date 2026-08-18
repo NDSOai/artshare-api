@@ -29,6 +29,7 @@ const allowedOrigins = new Set(
     "http://localhost:3000",
     "https://www.whootaloo.com",
     "https://whootaloo.com",
+    "http://127.0.0.1:3000",
     "https://artshare-frontend-production.up.railway.app",
   ].map((origin) => origin.replace(/\/$/, "")),
 );

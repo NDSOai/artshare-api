@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { sql, type UserRow } from "../db.js";
 import { readToken, tokenMatchesUser } from "./jwt.js";
+import { cacheNone } from "./http-cache.js";
 
 export type Authed = { user: UserRow };
 
@@ -28,6 +29,7 @@ export const requireAuth: MiddlewareHandler<{ Variables: Authed }> = async (c, n
     if (!user || !tokenMatchesUser(payload, user)) return c.json({ error: "Sign in required." }, 401);
     c.set("user", user);
     await next();
+    cacheNone(c);
   } catch {
     return c.json({ error: "Sign in required." }, 401);
   }

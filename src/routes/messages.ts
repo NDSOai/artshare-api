@@ -7,8 +7,14 @@ import { assertCooldown, lastMessageAt, limited, messagesLastHour } from "../lib
 import { newId } from "../lib/tokens.js";
 import { publicMediaUrl } from "../lib/storage.js";
 import { areMutual } from "./follows.js";
+import { cacheNone } from "../lib/http-cache.js";
 
 export const messageRoutes = new Hono<{ Variables: Authed }>();
+
+messageRoutes.use("*", async (c, next) => {
+  await next();
+  cacheNone(c);
+});
 
 type MessageRow = {
   id: string;

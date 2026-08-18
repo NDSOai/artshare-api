@@ -12,8 +12,14 @@ import { cleanHandle, signupProblem } from "../lib/signup-guard.js";
 import { consumeCaptcha, issueCaptcha } from "../lib/captcha.js";
 import { grantAndEmailInvites, peekOpenInvite, redeemInvite } from "../lib/invites.js";
 import { ensureFavorites } from "../lib/collections.js";
+import { cacheNone } from "../lib/http-cache.js";
 
 export const authRoutes = new Hono<{ Variables: Authed }>();
+
+authRoutes.use("*", async (c, next) => {
+  await next();
+  cacheNone(c);
+});
 
 authRoutes.get("/captcha", async (c) => {
   const ipLimit = hitIp(`captcha:${clientIp(c)}`, 30, 15 * 60 * 1000, "request another puzzle");

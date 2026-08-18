@@ -166,3 +166,13 @@ create table if not exists app_kv (
   key text primary key,
   value text not null
 );
+
+create index if not exists works_artist_created_idx on works (artist_id, created_at desc);
+create index if not exists works_created_idx on works (created_at desc);
+create index if not exists works_kind_created_idx on works (kind, created_at desc);
+create index if not exists likes_work_idx on likes (work_id);
+create index if not exists comments_work_created_idx on comments (work_id, created_at);
+create index if not exists collection_works_work_idx on collection_works (work_id);
+create index if not exists follows_followee_idx on follows (followee_id, created_at desc);
+create index if not exists reposts_work_idx on reposts (work_id);
+create index if not exists reposts_user_created_idx on reposts (user_id, created_at desc);

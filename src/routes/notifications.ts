@@ -2,8 +2,14 @@ import { Hono } from "hono";
 import { sql } from "../db.js";
 import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { publicMediaUrl } from "../lib/storage.js";
+import { cacheNone } from "../lib/http-cache.js";
 
 export const notificationRoutes = new Hono<{ Variables: Authed }>();
+
+notificationRoutes.use("*", async (c, next) => {
+  await next();
+  cacheNone(c);
+});
 
 notificationRoutes.use("*", requireAuth);
 
