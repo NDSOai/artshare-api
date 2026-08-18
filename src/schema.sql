@@ -167,6 +167,19 @@ create table if not exists app_kv (
   value text not null
 );
 
+alter table works add column if not exists skips integer not null default 0;
+
+create table if not exists work_signals (
+  work_id text not null references works(id) on delete cascade,
+  kind text not null,
+  visitor text not null,
+  created_at timestamptz not null default now(),
+  primary key (work_id, kind, visitor),
+  check (kind in ('view', 'skip'))
+);
+
+create index if not exists work_signals_work_kind_idx on work_signals (work_id, kind);
+
 create index if not exists works_artist_created_idx on works (artist_id, created_at desc);
 create index if not exists works_created_idx on works (created_at desc);
 create index if not exists works_kind_created_idx on works (kind, created_at desc);

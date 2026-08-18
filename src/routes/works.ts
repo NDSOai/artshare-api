@@ -1,8 +1,8 @@
-import { Hono } from "hono";
-import { publicWork, sql, type WorkRow } from "../db.js";
+import { Hono, type Context } from "hono";
+import { asPublicWork, publicWorks, recordWorkSignal, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
-import { assertCooldown, lastRepostAt, lastWorkAt, limited, limitPublicGet, repostsLastHour } from "../lib/rate-limit.js";
+import { assertCooldown, clientIp, hitIp, lastRepostAt, lastWorkAt, limited, limitPublicGet, repostsLastHour } from "../lib/rate-limit.js";
 import { parseMultipart, type FormFile } from "../lib/multipart.js";
 import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
 import { consumeCaptcha } from "../lib/captcha.js";
@@ -13,6 +13,12 @@ export const workRoutes = new Hono<{ Variables: Authed }>();
 
 function clip(value: string, max: number) {
   return value.trim().slice(0, max);
+}
+
+async function visitorOf(c: Context) {
+  const me = await readUserFromRequest(c);
+  if (me) return `u:${me.id}`;
+  return `ip:${clientIp(c)}`;
 }
 
 workRoutes.get("/", async (c) => {
@@ -58,7 +64,7 @@ workRoutes.get("/", async (c) => {
       return true;
     });
     cacheNone(c);
-    return c.json({ works: works.map(publicWork) });
+    return c.json({ works: await publicWorks(works) });
   }
 
   const works = await sql<WorkRow[]>`
@@ -72,7 +78,7 @@ workRoutes.get("/", async (c) => {
     limit 100
   `;
   cachePublic(c, 60, 300);
-  return c.json({ works: works.map(publicWork) });
+  return c.json({ works: await publicWorks(works) });
 });
 
 workRoutes.post("/:id/like", requireAuth, async (c) => {
@@ -106,6 +112,19 @@ workRoutes.delete("/:id/like", requireAuth, async (c) => {
   await sql`delete from likes where user_id = ${user.id} and work_id = ${workId}`;
   const [count] = await sql<{ n: number }[]>`select count(*)::int as n from likes where work_id = ${workId}`;
   return c.json({ liked: false, count: count.n });
+});
+
+workRoutes.post("/:id/signal", async (c) => {
+  const blocked = hitIp(`work-signal:${clientIp(c)}`, 90, 60_000, "try");
+  if (blocked) return limited(c, blocked);
+  const workId = c.req.param("id");
+  const body = await c.req.json<{ kind?: string }>().catch(() => ({} as { kind?: string }));
+  const kind = body.kind === "skip" ? "skip" : body.kind === "view" ? "view" : null;
+  if (!kind) return c.json({ error: "Unknown signal." }, 400);
+  const [work] = await sql<{ id: string }[]>`select id from works where id = ${workId} limit 1`;
+  if (!work) return c.json({ error: "Work not found." }, 404);
+  const added = await recordWorkSignal(work.id, kind, await visitorOf(c));
+  return c.json({ ok: true, added });
 });
 
 function asCaption(value: unknown) {
@@ -219,7 +238,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
     `;
     if (!work) return c.json({ error: "Could not save that work." }, 500);
     return c.json({
-      work: publicWork({
+      work: await asPublicWork({
         ...work,
         artist_name: user.name,
         artist_handle: user.handle,
@@ -256,6 +275,7 @@ workRoutes.get("/:id", async (c) => {
   `;
   if (!work) return c.json({ error: "Work not found." }, 404);
   await sql`update works set views = views + 1 where id = ${work.id}`;
+  await recordWorkSignal(work.id, "view", await visitorOf(c), false);
   const shares = await sql<{ handle: string; name: string; caption: string; created_at: Date }[]>`
     select u.handle, u.name, r.caption, r.created_at
     from reposts r
@@ -272,7 +292,7 @@ workRoutes.get("/:id", async (c) => {
   `;
   cachePublic(c, 120, 300);
   return c.json({
-    work: publicWork({
+    work: await asPublicWork({
       ...work,
       views: work.views + 1,
       share_count: count?.n ?? shares.length,
@@ -494,7 +514,7 @@ workRoutes.post("/", requireAuth, async (c) => {
 
   return c.json(
     {
-      work: publicWork({
+      work: await asPublicWork({
         ...work,
         artist_name: user.name,
         artist_handle: user.handle,

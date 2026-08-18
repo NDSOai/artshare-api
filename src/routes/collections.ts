@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { publicWork, sql, type WorkRow } from "../db.js";
+import { publicWorks, sql, type WorkRow } from "../db.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { ensureFavorites, isFavoritesName } from "../lib/collections.js";
 import { notify } from "../lib/notify.js";
@@ -173,7 +173,7 @@ collectionRoutes.get("/:id", async (c) => {
   `;
   return c.json({
     collection: publicCollection(col, { mine: Boolean(me && me.id === col.owner_id) }),
-    works: works.map(publicWork),
+    works: await publicWorks(works),
   });
 });
 

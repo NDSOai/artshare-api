@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { clampBannerPosition, publicArtist, publicUser, publicWork, sql, veilAbout, type UserRow, type WorkRow } from "../db.js";
+import { clampBannerPosition, publicArtist, publicUser, publicWorks, sql, veilAbout, type UserRow, type WorkRow } from "../db.js";
 import { isAdminEmail } from "../lib/admin.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { isFollowing } from "./follows.js";
@@ -227,7 +227,7 @@ userRoutes.get("/me/cheers", requireAuth, async (c) => {
     order by l.created_at desc
     limit 80
   `;
-  return c.json({ works: works.map(publicWork) });
+  return c.json({ works: await publicWorks(works) });
 });
 
 userRoutes.get("/me/portfolio", requireAuth, async (c) => {
@@ -274,7 +274,7 @@ userRoutes.get("/me/portfolio", requireAuth, async (c) => {
     views: stats?.views ?? 0,
     cheers: stats?.cheers ?? 0,
     collectionAdds: stats?.collection_adds ?? 0,
-    works: works.map(publicWork),
+    works: await publicWorks(works),
     shares: shares.map((row) => ({
       handle: row.handle,
       name: row.name,
@@ -325,7 +325,7 @@ userRoutes.get("/:handle", async (c) => {
   return c.json({
     user: showAbout && me?.id === user.id ? publicUser(user) : undefined,
     artist: veilAbout(publicArtist(user), showAbout),
-    works: works.map(publicWork),
-    reposts: reposts.map(publicWork),
+    works: await publicWorks(works),
+    reposts: await publicWorks(reposts),
   });
 });

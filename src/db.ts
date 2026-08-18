@@ -51,6 +51,8 @@ export type WorkRow = {
   remixable: boolean;
   download_permitted: boolean;
   views: number;
+  skips?: number;
+  cheer_count?: number;
   tools: string[];
   kind?: string;
   license?: string;
@@ -152,15 +154,15 @@ function workDate(value: Date | string | null | undefined) {
     : new Date().toISOString().slice(0, 10);
 }
 
-export function publicWork(
-  work: WorkRow & {
-    reposted_by?: string | null;
-    reposted_by_name?: string | null;
-    share_count?: number;
-    collect_count?: number;
-    repost_caption?: string | null;
-  },
-) {
+type PublicWorkRow = WorkRow & {
+  reposted_by?: string | null;
+  reposted_by_name?: string | null;
+  share_count?: number;
+  collect_count?: number;
+  repost_caption?: string | null;
+};
+
+export function publicWork(work: PublicWorkRow) {
   return {
     id: work.id,
     title: work.title,
@@ -172,6 +174,8 @@ export function publicWork(
     humanVerified: Boolean(work.artist_verified),
     remixable: work.remixable,
     views: work.views,
+    cheers: work.cheer_count ?? 0,
+    skips: work.skips ?? 0,
     date: workDate(work.created_at),
     tools: work.tools ?? [],
     description: work.description ?? undefined,
@@ -187,4 +191,47 @@ export function publicWork(
     shareCount: work.share_count ?? 0,
     collectCount: work.collect_count ?? 0,
   };
+}
+
+export async function attachCheerCounts<T extends { id: string }>(works: T[]) {
+  if (!works.length) return works.map((work) => ({ ...work, cheer_count: 0 }));
+  const ids = works.map((work) => work.id);
+  const rows = await sql<{ work_id: string; n: number }[]>`
+    select work_id, count(*)::int as n from likes where work_id in ${sql(ids)} group by work_id
+  `;
+  const counts = new Map(rows.map((row) => [row.work_id, row.n]));
+  return works.map((work) => ({ ...work, cheer_count: counts.get(work.id) ?? 0 }));
+}
+
+export async function publicWorks(works: PublicWorkRow[]) {
+  const withCheers = await attachCheerCounts(works);
+  return withCheers.map(publicWork);
+}
+
+export async function asPublicWork(work: PublicWorkRow) {
+  const [mapped] = await publicWorks([work]);
+  return mapped!;
+}
+
+export async function recordWorkSignal(
+  workId: string,
+  kind: "view" | "skip",
+  visitor: string,
+  bump = true,
+) {
+  const key = visitor.trim().slice(0, 120) || "unknown";
+  const inserted = await sql<{ work_id: string }[]>`
+    insert into work_signals (work_id, kind, visitor)
+    values (${workId}, ${kind}, ${key})
+    on conflict do nothing
+    returning work_id
+  `;
+  if (!inserted[0]) return false;
+  if (!bump) return true;
+  if (kind === "view") {
+    await sql`update works set views = views + 1 where id = ${workId}`;
+  } else {
+    await sql`update works set skips = skips + 1 where id = ${workId}`;
+  }
+  return true;
 }
