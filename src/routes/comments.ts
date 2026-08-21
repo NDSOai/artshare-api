@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { sql } from "../db.js";
-import { requireAuth, type Authed } from "../lib/auth-mw.js";
+import { requireAuth, requireCatalog, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { assertCooldown, commentsLastHour, lastCommentAt, limited } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
-import { cachePublic } from "../lib/http-cache.js";
+import { cacheCatalog } from "../lib/http-cache.js";
 
 export const commentRoutes = new Hono<{ Variables: Authed }>();
 
@@ -42,7 +42,7 @@ function publicComment(row: {
   };
 }
 
-commentRoutes.get("/:workId/comments", async (c) => {
+commentRoutes.get("/:workId/comments", requireCatalog, async (c) => {
   const rows = await sql<
     {
       id: string;
@@ -61,7 +61,7 @@ commentRoutes.get("/:workId/comments", async (c) => {
     where c.work_id = ${c.req.param("workId")}
     order by c.created_at asc
   `;
-  cachePublic(c, 30, 120);
+  cacheCatalog(c, 30, 120);
   return c.json({
     comments: rows.map(publicComment),
   });

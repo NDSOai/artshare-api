@@ -71,11 +71,15 @@ function card(title: string, body: string, href: string, label: string) {
 export async function sendConfirmationEmail(email: string, confirmationUrl: string) {
   const resend = client();
   if (!resend) {
-    console.log(`[email] confirm ${email} ${confirmationUrl}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[email] confirm ${email} ${confirmationUrl}`);
+    } else {
+      console.log(`[email] confirm skipped (no mailer) for ${email}`);
+    }
     return;
   }
   try {
-    const result = await resend.emails.send({
+    await resend.emails.send({
       from: env.resendFrom,
       to: email,
       subject: "Confirm your Whootaloo email",
@@ -86,7 +90,7 @@ export async function sendConfirmationEmail(email: string, confirmationUrl: stri
         "Confirm email",
       ),
     });
-    console.log(`[email] confirmation sent to ${email}:`, result);
+    console.log(`[email] confirmation sent to ${email}`);
   } catch (err) {
     console.error(`[email] confirmation failed for ${email}:`, err);
     throw err;
@@ -141,26 +145,34 @@ export async function sendInviteCodesEmail(email: string, name: string, codes: s
 </body>
 </html>`;
   if (!resend) {
-    console.log(`[email] invites ${email} ${codes.join(", ")}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[email] invites ${email} ${codes.length} codes`);
+    } else {
+      console.log(`[email] invites skipped (no mailer) for ${email}`);
+    }
     return;
   }
-  const result = await resend.emails.send({
+  await resend.emails.send({
     from: env.resendFrom,
     to: email,
     subject: "Your 7 Whootaloo invites",
     html,
   });
-  console.log(`[email] invites sent to ${email}:`, result);
+  console.log(`[email] invites sent to ${email}`);
 }
 
 export async function sendPasswordResetEmail(email: string, resetUrl: string) {
   const resend = client();
   if (!resend) {
-    console.log(`[email] reset ${email} ${resetUrl}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[email] reset ${email} ${resetUrl}`);
+    } else {
+      console.log(`[email] reset skipped (no mailer) for ${email}`);
+    }
     return;
   }
   try {
-    const result = await resend.emails.send({
+    await resend.emails.send({
       from: env.resendFrom,
       to: email,
       subject: "Reset your Whootaloo password",
@@ -171,7 +183,7 @@ export async function sendPasswordResetEmail(email: string, resetUrl: string) {
         "Choose a new password",
       ),
     });
-    console.log(`[email] reset sent to ${email}:`, result);
+    console.log(`[email] reset sent to ${email}`);
   } catch (err) {
     console.error(`[email] reset failed for ${email}:`, err);
     throw err;

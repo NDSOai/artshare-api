@@ -1,13 +1,13 @@
 import { Hono, type Context } from "hono";
 import { asPublicWork, publicWorks, recordWorkSignal, sql, type WorkRow } from "../db.js";
-import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
+import { readUserFromRequest, requireAuth, requireCatalog, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { assertCooldown, clientIp, hitIp, lastRepostAt, lastWorkAt, limited, limitPublicGet, repostsLastHour } from "../lib/rate-limit.js";
 import { parseMultipart, type FormFile } from "../lib/multipart.js";
 import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
 import { consumeCaptcha } from "../lib/captcha.js";
 import { newId } from "../lib/tokens.js";
-import { cacheNone, cachePublic } from "../lib/http-cache.js";
+import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
 
@@ -21,7 +21,7 @@ async function visitorOf(c: Context) {
   return `ip:${clientIp(c)}`;
 }
 
-workRoutes.get("/", async (c) => {
+workRoutes.get("/", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "works-list", 120);
   if (blocked) return blocked;
   const q = (c.req.query("q") || "").trim().replace(/[%_]/g, "").slice(0, 80);
@@ -37,7 +37,12 @@ workRoutes.get("/", async (c) => {
       select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
       from works w
       join users u on u.id = w.artist_id
-      where w.artist_id in (select followee_id from follows where follower_id = ${me.id})
+      where (
+          w.artist_id in (select followee_id from follows where follower_id = ${me.id})
+          or lower(regexp_replace(btrim(w.medium), E'\\s+', '-', 'g')) in (
+            select slug from topic_follows where user_id = ${me.id}
+          )
+        )
         and (${medium} = '' or lower(replace(w.medium, ' ', '-')) = ${medium.toLowerCase()})
         and (${kind} = '' or w.kind = ${kind})
       order by w.created_at desc
@@ -77,7 +82,7 @@ workRoutes.get("/", async (c) => {
     order by w.created_at desc
     limit 100
   `;
-  cachePublic(c, 60, 300);
+  cacheCatalog(c, 60, 300);
   return c.json({ works: await publicWorks(works) });
 });
 
@@ -263,7 +268,7 @@ workRoutes.delete("/:id", requireAuth, async (c) => {
   return c.json({ deleted: true, id: existing.id });
 });
 
-workRoutes.get("/:id", async (c) => {
+workRoutes.get("/:id", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "works-get", 120);
   if (blocked) return blocked;
   const [work] = await sql<WorkRow[]>`
@@ -290,7 +295,7 @@ workRoutes.get("/:id", async (c) => {
   const [collects] = await sql<{ n: number }[]>`
     select count(*)::int as n from collection_works where work_id = ${work.id}
   `;
-  cachePublic(c, 120, 300);
+  cacheCatalog(c, 120, 300);
   return c.json({
     work: await asPublicWork({
       ...work,

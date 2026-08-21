@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { sql, type UserRow } from "../db.js";
+import { env } from "../env.js";
 import { readToken, tokenMatchesUser } from "./jwt.js";
 import { cacheNone } from "./http-cache.js";
 
@@ -33,4 +34,10 @@ export const requireAuth: MiddlewareHandler<{ Variables: Authed }> = async (c, n
   } catch {
     return c.json({ error: "Sign in required." }, 401);
   }
+};
+
+/** Public catalog when CATALOG_PUBLIC is on. Until then, a session is required. */
+export const requireCatalog: MiddlewareHandler<{ Variables: Authed }> = async (c, next) => {
+  if (env.catalogPublic) return next();
+  return requireAuth(c, next);
 };

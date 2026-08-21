@@ -1,11 +1,18 @@
 import { Hono } from "hono";
 import { publicWorks, sql, type WorkRow } from "../db.js";
-import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
+import { readUserFromRequest, requireAuth, requireCatalog, type Authed } from "../lib/auth-mw.js";
 import { ensureFavorites, isFavoritesName } from "../lib/collections.js";
 import { notify } from "../lib/notify.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
-import { cachePublic } from "../lib/http-cache.js";
+import { cacheCatalog } from "../lib/http-cache.js";
+import {
+  isStorageReady,
+  ownMediaKey,
+  parseDataUrl,
+  publicMediaUrl,
+  putCollectionCoverFile,
+} from "../lib/storage.js";
 
 export const collectionRoutes = new Hono<{ Variables: Authed }>();
 
@@ -16,6 +23,8 @@ type CollectionRow = {
   description: string;
   tags: unknown;
   sort_order: number;
+  cover_url?: string | null;
+  cover_work_id?: string | null;
   owner_name?: string;
   owner_handle?: string;
   n?: number;
@@ -41,11 +50,19 @@ function asTags(value: unknown): string[] {
   return tags;
 }
 
+function workImageKey(work: { kind?: string | null; media_url?: string | null; cover_url?: string | null }) {
+  const kind = work.kind ?? "image";
+  if (kind === "music" || kind === "text") return work.cover_url || work.media_url || null;
+  return work.media_url || work.cover_url || null;
+}
+
 function publicCollection(row: CollectionRow, extra: Record<string, unknown> = {}) {
   return {
     id: row.id,
     name: row.name,
     coverColor: row.cover_color,
+    coverUrl: publicMediaUrl(row.cover_url),
+    coverWorkId: row.cover_work_id || null,
     description: row.description || "",
     tags: asTags(row.tags),
     sortOrder: row.sort_order ?? 0,
@@ -57,11 +74,58 @@ function publicCollection(row: CollectionRow, extra: Record<string, unknown> = {
   };
 }
 
+async function coverFromWork(workId: string | null, collectionId: string) {
+  if (!workId) return { coverUrl: null as string | null, coverWorkId: null as string | null };
+  const [work] = await sql<{ id: string; kind: string | null; media_url: string | null; cover_url: string | null }[]>`
+    select w.id, w.kind, w.media_url, w.cover_url
+    from works w
+    join collection_works cw on cw.work_id = w.id
+    where w.id = ${workId} and cw.collection_id = ${collectionId}
+    limit 1
+  `;
+  if (!work) return { coverUrl: null as string | null, coverWorkId: null as string | null };
+  return { coverUrl: workImageKey(work), coverWorkId: work.id };
+}
+
+async function resolveCover(
+  collectionId: string,
+  ownerId: string,
+  currentUrl: string | null,
+  currentWorkId: string | null,
+  incomingUrl: string | undefined,
+  incomingWorkId: string | null | undefined,
+) {
+  if (incomingWorkId !== undefined && incomingWorkId) {
+    const fromWork = await coverFromWork(incomingWorkId, collectionId);
+    if (fromWork.coverWorkId) return fromWork;
+  }
+  if (incomingWorkId === null) {
+    if (incomingUrl === undefined || incomingUrl === "") {
+      return { coverUrl: null, coverWorkId: null };
+    }
+  }
+  if (incomingUrl === undefined) {
+    return { coverUrl: currentUrl, coverWorkId: incomingWorkId === undefined ? currentWorkId : incomingWorkId };
+  }
+  if (!incomingUrl) return { coverUrl: null, coverWorkId: incomingWorkId ?? null };
+  if (incomingUrl.startsWith("data:")) {
+    const parsed = parseDataUrl(incomingUrl);
+    if (!parsed) throw new Error("That photo could not be used.");
+    if (!isStorageReady()) return { coverUrl: currentUrl, coverWorkId: null };
+    const key = await putCollectionCoverFile(ownerId, collectionId, parsed);
+    return { coverUrl: key, coverWorkId: null };
+  }
+  const own = ownMediaKey(incomingUrl);
+  if (own) return { coverUrl: own, coverWorkId: incomingWorkId ?? null };
+  return { coverUrl: currentUrl, coverWorkId: incomingWorkId === undefined ? currentWorkId : incomingWorkId };
+}
+
 collectionRoutes.get("/", requireAuth, async (c) => {
   const me = c.get("user");
   await ensureFavorites(me.id);
   const rows = await sql<CollectionRow[]>`
-    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, count(cw.work_id)::int as n
+    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, c.cover_url, c.cover_work_id,
+           count(cw.work_id)::int as n
     from collections c
     left join collection_works cw on cw.collection_id = c.id
     where c.owner_id = ${me.id}
@@ -73,14 +137,15 @@ collectionRoutes.get("/", requireAuth, async (c) => {
   });
 });
 
-collectionRoutes.get("/search", async (c) => {
+
+collectionRoutes.get("/search", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "collections-search", 80);
   if (blocked) return blocked;
   const q = (c.req.query("q") || "").trim().replace(/^#+/, "").replace(/[%_]/g, "").slice(0, 80);
   if (q.length < 2) return c.json({ collections: [] });
   const like = `%${q}%`;
   const rows = await sql<CollectionRow[]>`
-    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order,
+    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, c.cover_url, c.cover_work_id,
            u.name as owner_name, u.handle as owner_handle, count(cw.work_id)::int as n
     from collections c
     join users u on u.id = c.owner_id
@@ -98,7 +163,7 @@ collectionRoutes.get("/search", async (c) => {
     order by c.created_at desc
     limit 40
   `;
-  cachePublic(c, 120);
+  cacheCatalog(c, 120);
   return c.json({ collections: rows.map((row) => publicCollection(row)) });
 });
 
@@ -109,7 +174,8 @@ collectionRoutes.post("/", requireAuth, async (c) => {
   if (isFavoritesName(name)) {
     const id = await ensureFavorites(me.id);
     const [row] = await sql<CollectionRow[]>`
-      select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, count(cw.work_id)::int as n
+      select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, c.cover_url, c.cover_work_id,
+             count(cw.work_id)::int as n
       from collections c
       left join collection_works cw on cw.collection_id = c.id
       where c.id = ${id}
@@ -125,7 +191,7 @@ collectionRoutes.post("/", requireAuth, async (c) => {
   const [row] = await sql<CollectionRow[]>`
     insert into collections (id, owner_id, name, description, tags, sort_order)
     values (${newId("col")}, ${me.id}, ${name}, ${description}, ${sql.json(tags)}, ${next?.n ?? 0})
-    returning id, name, cover_color, description, tags, sort_order
+    returning id, name, cover_color, description, tags, sort_order, cover_url, cover_work_id
   `;
   return c.json({ collection: publicCollection({ ...row, n: 0 }) }, 201);
 });
@@ -150,12 +216,12 @@ collectionRoutes.patch("/order", requireAuth, async (c) => {
   return c.json({ ok: true, ids: ordered });
 });
 
-collectionRoutes.get("/:id", async (c) => {
+collectionRoutes.get("/:id", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "collections-get", 120);
   if (blocked) return blocked;
   const me = await readUserFromRequest(c);
   const [col] = await sql<(CollectionRow & { owner_id: string })[]>`
-    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order,
+    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, c.cover_url, c.cover_work_id,
            c.owner_id, u.name as owner_name, u.handle as owner_handle
     from collections c
     join users u on u.id = c.owner_id
@@ -180,15 +246,30 @@ collectionRoutes.get("/:id", async (c) => {
 collectionRoutes.patch("/:id", requireAuth, async (c) => {
   const me = c.get("user");
   const [existing] = await sql<CollectionRow[]>`
-    select id, name, cover_color, description, tags, sort_order
+    select id, name, cover_color, description, tags, sort_order, cover_url, cover_work_id
     from collections
     where id = ${c.req.param("id")} and owner_id = ${me.id}
     limit 1
   `;
   if (!existing) return c.json({ error: "Collection not found." }, 404);
-  const body = await c.req.json<{ name?: string; description?: string; tags?: string[] }>().catch(
-    () => ({}) as { name?: string; description?: string; tags?: string[] },
-  );
+  const body = await c.req
+    .json<{
+      name?: string;
+      description?: string;
+      tags?: string[];
+      coverUrl?: string;
+      coverWorkId?: string | null;
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          name?: string;
+          description?: string;
+          tags?: string[];
+          coverUrl?: string;
+          coverWorkId?: string | null;
+        },
+    );
   let name = existing.name;
   if (body.name !== undefined && !isFavoritesName(existing.name)) {
     name = clip(String(body.name), 60) || existing.name;
@@ -196,11 +277,28 @@ collectionRoutes.patch("/:id", requireAuth, async (c) => {
   }
   const description = body.description !== undefined ? clip(String(body.description), 500) : existing.description;
   const tags = body.tags !== undefined ? asTags(body.tags) : asTags(existing.tags);
+  let cover;
+  try {
+    cover = await resolveCover(
+      existing.id,
+      me.id,
+      existing.cover_url ?? null,
+      existing.cover_work_id ?? null,
+      body.coverUrl,
+      body.coverWorkId,
+    );
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Could not save that cover." }, 400);
+  }
   const [row] = await sql<CollectionRow[]>`
     update collections
-    set name = ${name}, description = ${description}, tags = ${sql.json(tags)}
+    set name = ${name},
+        description = ${description},
+        tags = ${sql.json(tags)},
+        cover_url = ${cover.coverUrl},
+        cover_work_id = ${cover.coverWorkId}
     where id = ${existing.id} and owner_id = ${me.id}
-    returning id, name, cover_color, description, tags, sort_order
+    returning id, name, cover_color, description, tags, sort_order, cover_url, cover_work_id
   `;
   return c.json({ collection: publicCollection(row, { mine: true }) });
 });

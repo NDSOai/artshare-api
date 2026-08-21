@@ -45,4 +45,5 @@ export const env = {
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
   inviteOnly: !["0", "false", "off"].includes((process.env.INVITE_ONLY || "true").toLowerCase()),
+  catalogPublic: ["1", "true", "on"].includes((process.env.CATALOG_PUBLIC || "").toLowerCase()),
 };

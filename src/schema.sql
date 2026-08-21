@@ -125,6 +125,18 @@ alter table collection_works add column if not exists sort_order integer not nul
 alter table collections add column if not exists description text not null default '';
 alter table collections add column if not exists tags jsonb not null default '[]'::jsonb;
 alter table collections add column if not exists sort_order integer not null default 0;
+alter table collections add column if not exists cover_url text;
+alter table collections add column if not exists cover_work_id text references works(id) on delete set null;
+
+create table if not exists topic_follows (
+  user_id text not null references users(id) on delete cascade,
+  slug text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, slug),
+  check (slug ~ '^[a-z0-9][a-z0-9-]{0,62}$')
+);
+
+create index if not exists topic_follows_slug_idx on topic_follows (slug);
 alter table likes add column if not exists created_at timestamptz not null default now();
 
 create table if not exists notifications (

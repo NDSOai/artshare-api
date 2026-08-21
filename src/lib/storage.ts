@@ -81,7 +81,7 @@ export function publicMediaUrl(key: string | null | undefined) {
 }
 
 export function isSafeMediaKey(key: string) {
-  return /^(works|avatars|banners)\/[a-zA-Z0-9._/-]+$/.test(key) && !key.includes("..");
+  return /^(works|avatars|banners|collections)\/[a-zA-Z0-9._/-]+$/.test(key) && !key.includes("..");
 }
 
 export function ownMediaKey(value: string | null | undefined) {
@@ -122,24 +122,30 @@ function sniffAudio(buf: Buffer) {
   return null;
 }
 
-async function packImage(buf: Buffer, type: string, maxEdge: number) {
-  try {
-    const { default: sharp } = await import("sharp");
+async function packImage(buf: Buffer, _type: string, maxEdge: number) {
+  const { default: sharp } = await import("sharp");
+  const pipeline = () => {
     const image = sharp(buf, { failOn: "none" }).rotate();
-    const meta = await image.metadata();
-    const width = meta.width ?? 0;
-    const height = meta.height ?? 0;
+    return image;
+  };
+  const meta = await pipeline().metadata();
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  const sized = () => {
+    const image = pipeline();
     if (width > maxEdge || height > maxEdge) {
-      image.resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true });
+      return image.resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true });
     }
-    const bytes = await image.webp({ quality: 88, effort: 4 }).toBuffer();
-    if (bytes.length > 0 && bytes.length < buf.length) {
-      return { bytes, type: "image/webp" };
-    }
+    return image;
+  };
+  try {
+    const bytes = await sized().webp({ quality: 88, effort: 4 }).toBuffer();
+    if (bytes.length > 0) return { bytes, type: "image/webp" };
   } catch {
-    // Keep the original file if compression fails or isn't smaller.
+    /* fall through to JPEG */
   }
-  return { bytes: buf, type };
+  const bytes = await sized().jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+  return { bytes, type: "image/jpeg" };
 }
 
 export function parseDataUrl(dataUrl: string) {
@@ -167,6 +173,20 @@ export async function putBannerFile(userId: string, file: { type: string; bytes:
   if (!sniffed) throw new Error("That photo could not be used.");
   const packed = await packImage(file.bytes, sniffed, 1920);
   const key = `banners/${userId}.${extFor(packed.type, "image")}`;
+  await putObject(key, packed.bytes, packed.type);
+  return key;
+}
+
+export async function putCollectionCoverFile(
+  userId: string,
+  collectionId: string,
+  file: { type: string; bytes: Buffer },
+) {
+  if (!isStorageReady()) throw new Error("File storage is not ready yet.");
+  const sniffed = sniffImage(file.bytes);
+  if (!sniffed) throw new Error("That photo could not be used.");
+  const packed = await packImage(file.bytes, sniffed, 1920);
+  const key = `collections/${userId}/${collectionId}.${extFor(packed.type, "image")}`;
   await putObject(key, packed.bytes, packed.type);
   return key;
 }

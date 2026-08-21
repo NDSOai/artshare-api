@@ -23,30 +23,18 @@ function uniqueSecrets(values: string[]) {
 
 export async function initMessageCrypto() {
   extras.length = 0;
+  primary = asKey(env.messageSecret);
   const [row] = await sql<{ value: string }[]>`
     select value from app_kv where key = 'message_secret' limit 1
   `;
-  let pinned = row?.value ?? "";
-  if (!pinned) {
-    pinned = env.messageSecret;
-    await sql`
-      insert into app_kv (key, value) values ('message_secret', ${pinned})
-      on conflict (key) do nothing
-    `;
-    const [again] = await sql<{ value: string }[]>`
-      select value from app_kv where key = 'message_secret' limit 1
-    `;
-    pinned = again?.value ?? pinned;
-  }
-  primary = asKey(pinned);
   for (const secret of uniqueSecrets([
-    env.messageSecret,
+    row?.value ?? "",
     ...(process.env.MESSAGE_SECRET_PREV || "").split(","),
   ])) {
-    if (secret === pinned) continue;
+    if (secret === env.messageSecret) continue;
     extras.push(asKey(secret));
   }
-  console.log(`[messages] crypto pinned in postgres (${1 + extras.length} key${1 + extras.length === 1 ? "" : "s"})`);
+  console.log(`[messages] crypto from env (${1 + extras.length} key${1 + extras.length === 1 ? "" : "s"})`);
 }
 
 function requirePrimary() {

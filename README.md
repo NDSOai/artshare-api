@@ -21,9 +21,10 @@ Needs Postgres. Railway can provide `DATABASE_URL`.
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres |
 | `JWT_SECRET` | yes | Session tokens |
-| `MESSAGE_SECRET` | first boot | Seeds chat encryption once, then ignored. Do not regenerate. |
+| `MESSAGE_SECRET` | yes | Chat encryption at rest. Keep in Railway env. Do not store in the database. |
+| `MESSAGE_SECRET_PREV` | no | Comma-separated old secrets, only if you rotate |
 | `FRONTEND_URL` | yes in prod | Confirm / reset links, CORS |
-| `RESEND_API_KEY` | for mail | Without it, links log to stdout |
+| `RESEND_API_KEY` | for mail | Without it, links log to stdout in local only |
 | `RESEND_FROM` | no | Defaults to Resend onboarding sender |
 | `BUCKET_ENDPOINT` | for files | Railway Bucket `ENDPOINT` |
 | `BUCKET_NAME` | for files | Railway Bucket `BUCKET` |
@@ -31,6 +32,8 @@ Needs Postgres. Railway can provide `DATABASE_URL`.
 | `BUCKET_SECRET_ACCESS_KEY` | for files | Railway Bucket `SECRET_ACCESS_KEY` |
 | `BUCKET_REGION` | no | Defaults to `auto` |
 | `API_PUBLIC_URL` | for files | Public API origin, used in media URLs |
+| `INVITE_ONLY` | no | Defaults on. Signup needs an invite |
+| `CATALOG_PUBLIC` | no | Defaults off. Flip on with the site opening so Wander/search work without a session |
 | `PORT` | no | Railway sets this |
 
 ## Routes
@@ -41,6 +44,8 @@ Matches `lib/api.ts` on the frontend.
 |---|---|
 | POST | `/auth/signup` |
 | POST | `/auth/login` |
+| POST | `/auth/logout` |
+| POST | `/auth/change-password` |
 | GET | `/auth/me` |
 | POST | `/auth/confirm-email` |
 | POST | `/auth/forgot-password` |
@@ -57,7 +62,7 @@ Matches `lib/api.ts` on the frontend.
 
 Signup does not return a session. Confirm email first. Chat requires a mutual follow.
 
-Messages use AES-256-GCM on the server. The key is stored in Postgres after the first boot so deploys cannot rotate it. This is encryption at rest, not end-to-end.
+Messages use AES-256-GCM on the server with `MESSAGE_SECRET` from the environment. This is encryption at rest, not end-to-end. An older key may still sit in Postgres `app_kv` so existing threads can be read and rewritten onto the env secret.
 
 ## Point Railway at this repo
 

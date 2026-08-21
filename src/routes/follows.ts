@@ -44,9 +44,13 @@ followRoutes.get("/", requireAuth, async (c) => {
     where f.followee_id = ${me.id}
     order by f.created_at desc
   `;
+  const topics = await sql<{ slug: string }[]>`
+    select slug from topic_follows where user_id = ${me.id} order by created_at desc
+  `;
   return c.json({
     following: following.map((row) => row.handle),
     followers: followers.map((row) => row.handle),
+    topics: topics.map((row) => row.slug),
   });
 });
 
@@ -81,6 +85,49 @@ followRoutes.get("/hometree", requireAuth, async (c) => {
       lastPostedAt: row.last_posted_at ? row.last_posted_at.toISOString() : null,
     })),
   });
+});
+
+function asTopicSlug(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 63);
+}
+
+followRoutes.put("/topics", requireAuth, async (c) => {
+  const me = c.get("user");
+  const body = await c.req.json<{ topics?: string[] }>().catch(() => ({ topics: [] as string[] }));
+  const wanted = [...new Set((Array.isArray(body.topics) ? body.topics : []).map(asTopicSlug).filter(Boolean))];
+  await sql.begin(async (tx) => {
+    await tx`delete from topic_follows where user_id = ${me.id}`;
+    for (const slug of wanted) {
+      await tx`insert into topic_follows (user_id, slug) values (${me.id}, ${slug}) on conflict do nothing`;
+    }
+  });
+  return c.json({ topics: wanted });
+});
+
+followRoutes.post("/topics/:slug", requireAuth, async (c) => {
+  const me = c.get("user");
+  const slug = asTopicSlug(c.req.param("slug"));
+  if (!slug) return c.json({ error: "That topic could not be followed." }, 400);
+  await sql`
+    insert into topic_follows (user_id, slug)
+    values (${me.id}, ${slug})
+    on conflict do nothing
+  `;
+  return c.json({ following: true, slug });
+});
+
+followRoutes.delete("/topics/:slug", requireAuth, async (c) => {
+  const me = c.get("user");
+  const slug = asTopicSlug(c.req.param("slug"));
+  if (slug) {
+    await sql`delete from topic_follows where user_id = ${me.id} and slug = ${slug}`;
+  }
+  return c.json({ following: false, slug });
 });
 
 followRoutes.get("/:handle", requireAuth, async (c) => {

@@ -1,16 +1,16 @@
 import { Hono } from "hono";
 import { clampBannerPosition, publicArtist, publicUser, publicWorks, sql, veilAbout, type UserRow, type WorkRow } from "../db.js";
 import { isAdminEmail } from "../lib/admin.js";
-import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
+import { readUserFromRequest, requireAuth, requireCatalog, type Authed } from "../lib/auth-mw.js";
 import { isFollowing } from "./follows.js";
-import { isStorageReady, ownMediaKey, parseDataUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
+import { isStorageReady, ownMediaKey, parseDataUrl, publicMediaUrl, putAvatarFile, putBannerFile } from "../lib/storage.js";
 import { displayInviteCode, unusedInviteCodes } from "../lib/invites.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
-import { cacheNone, cachePublic } from "../lib/http-cache.js";
+import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
-userRoutes.get("/", async (c) => {
+userRoutes.get("/", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "users-search", 90);
   if (blocked) return blocked;
   const q = (c.req.query("q") || "").trim().replace(/^@+/, "").replace(/[%_]/g, "").slice(0, 80);
@@ -28,7 +28,7 @@ userRoutes.get("/", async (c) => {
         order by created_at desc
         limit 40
       `;
-  cachePublic(c, 60);
+  cacheCatalog(c, 60);
   return c.json({ users: users.map((user) => veilAbout(publicArtist(user), false)) });
 });
 
@@ -293,7 +293,50 @@ userRoutes.get("/me/portfolio", requireAuth, async (c) => {
   });
 });
 
-userRoutes.get("/:handle", async (c) => {
+userRoutes.get("/:handle/collections", requireCatalog, async (c) => {
+  const blocked = limitPublicGet(c, "users-collections", 90);
+  if (blocked) return blocked;
+  const handle = c.req.param("handle").toLowerCase();
+  const [user] = await sql<UserRow[]>`select id from users where lower(handle) = ${handle} limit 1`;
+  if (!user) return c.json({ error: "Artist not found." }, 404);
+  const rows = await sql<
+    {
+      id: string;
+      name: string;
+      cover_color: string;
+      description: string;
+      tags: unknown;
+      sort_order: number;
+      cover_url: string | null;
+      cover_work_id: string | null;
+      n: number;
+    }[]
+  >`
+    select c.id, c.name, c.cover_color, c.description, c.tags, c.sort_order, c.cover_url, c.cover_work_id,
+           count(cw.work_id)::int as n
+    from collections c
+    left join collection_works cw on cw.collection_id = c.id
+    where c.owner_id = ${user.id} and lower(c.name) <> 'favorites'
+    group by c.id
+    order by c.sort_order asc, c.created_at desc
+  `;
+  cacheCatalog(c, 60);
+  return c.json({
+    collections: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      coverColor: row.cover_color,
+      coverUrl: publicMediaUrl(row.cover_url),
+      coverWorkId: row.cover_work_id || null,
+      description: row.description || "",
+      tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+      sortOrder: row.sort_order ?? 0,
+      workCount: row.n ?? 0,
+    })),
+  });
+});
+
+userRoutes.get("/:handle", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "users-get", 90);
   if (blocked) return blocked;
   const handle = c.req.param("handle").toLowerCase();

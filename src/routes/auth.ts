@@ -5,7 +5,7 @@ import { sendConfirmationEmail, sendPasswordResetEmail } from "../lib/email.js";
 import { signToken } from "../lib/jwt.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
 import { passwordProblem } from "../lib/password-policy.js";
-import { generateToken, newId } from "../lib/tokens.js";
+import { generateToken, hashToken, newId } from "../lib/tokens.js";
 import { env } from "../env.js";
 import { clientIp, hitIp, hitIpDurable, limited } from "../lib/rate-limit.js";
 import { cleanHandle, signupProblem } from "../lib/signup-guard.js";
@@ -85,7 +85,7 @@ authRoutes.post("/signup", async (c) => {
   const userId = newId("user");
   await sql`
     insert into users (id, handle, name, email, password_hash, email_verification_token, email_verification_expires_at)
-    values (${userId}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${token}, now() + interval '48 hours')
+    values (${userId}, ${handle}, ${name}, ${email}, ${await hashPassword(password)}, ${hashToken(token)}, now() + interval '48 hours')
   `;
   if (env.inviteOnly && !(await redeemInvite(inviteCode, userId))) {
     await sql`delete from users where id = ${userId}`;
@@ -110,14 +110,14 @@ authRoutes.post("/signup", async (c) => {
 
 authRoutes.post("/login", async (c) => {
   const ip = clientIp(c);
-  const ipLimit = hitIp(`login-ip:${ip}`, 30, 15 * 60 * 1000, "try logging in");
+  const ipLimit = await hitIpDurable(`login-ip:${ip}`, 30, 15 * 60 * 1000, "try logging in");
   if (ipLimit) return limited(c, ipLimit);
 
   const body = await c.req.json<{ email?: string; password?: string }>();
   const email = (body.email || "").trim().toLowerCase();
   const [user] = await sql<UserRow[]>`select * from users where lower(email) = ${email} limit 1`;
   if (!user || !(await verifyPassword(body.password || "", user.password_hash))) {
-    const failLimit = hitIp(`login-fail:${email || ip}`, 8, 15 * 60 * 1000, "try logging in");
+    const failLimit = await hitIpDurable(`login-fail:${email || ip}`, 8, 15 * 60 * 1000, "try logging in");
     if (failLimit) return limited(c, failLimit);
     return c.json({ error: "Could not log in." }, 401);
   }
@@ -132,14 +132,47 @@ authRoutes.post("/login", async (c) => {
 
 authRoutes.get("/me", requireAuth, (c) => c.json(publicUser(c.get("user"))));
 
+authRoutes.post("/logout", requireAuth, async (c) => {
+  const me = c.get("user");
+  await sql`
+    update users set token_version = coalesce(token_version, 0) + 1 where id = ${me.id}
+  `;
+  return c.json({ ok: true });
+});
+
+authRoutes.post("/change-password", requireAuth, async (c) => {
+  const me = c.get("user");
+  const body = await c.req.json<{ currentPassword?: string; newPassword?: string }>().catch(
+    () => ({}) as { currentPassword?: string; newPassword?: string },
+  );
+  const badPassword = passwordProblem(body.newPassword || "");
+  if (badPassword) return c.json({ error: badPassword }, 400);
+  if (!(await verifyPassword(body.currentPassword || "", me.password_hash))) {
+    return c.json({ error: "That current password did not match." }, 400);
+  }
+  const [next] = await sql<UserRow[]>`
+    update users
+    set password_hash = ${await hashPassword(body.newPassword || "")},
+        token_version = coalesce(token_version, 0) + 1
+    where id = ${me.id}
+    returning *
+  `;
+  if (!next) return c.json({ error: "Could not update that password." }, 500);
+  return c.json({
+    token: await signToken(next),
+    user: publicUser(next),
+  });
+});
+
 authRoutes.post("/confirm-email", async (c) => {
   const ipLimit = hitIp(`confirm:${clientIp(c)}`, 20, 15 * 60 * 1000, "confirm that email");
   if (ipLimit) return limited(c, ipLimit);
   const { token } = await c.req.json<{ token?: string }>();
   if (!token) return c.json({ error: "Invalid or expired token" }, 400);
+  const hashed = hashToken(token);
   const [user] = await sql<UserRow[]>`
     select * from users
-    where email_verification_token = ${token}
+    where (email_verification_token = ${hashed} or email_verification_token = ${token})
       and (email_verification_expires_at is null or email_verification_expires_at > now())
     limit 1
   `;
@@ -175,7 +208,7 @@ authRoutes.post("/forgot-password", async (c) => {
     const token = generateToken();
     await sql`
       update users
-      set password_reset_token = ${token},
+      set password_reset_token = ${hashToken(token)},
           password_reset_expires_at = now() + interval '15 minutes'
       where id = ${user.id}
     `;
@@ -196,9 +229,10 @@ authRoutes.post("/reset-password", async (c) => {
   if (!token || badPassword) {
     return c.json({ error: badPassword || "Invalid or expired token" }, 400);
   }
+  const hashed = hashToken(token);
   const [user] = await sql<UserRow[]>`
     select * from users
-    where password_reset_token = ${token}
+    where (password_reset_token = ${hashed} or password_reset_token = ${token})
       and password_reset_expires_at > now()
     limit 1
   `;
@@ -223,10 +257,10 @@ authRoutes.post("/resend-confirmation", async (c) => {
   if (!clean) return c.json({ error: "Email is required." }, 400);
   const [user] = await sql<UserRow[]>`select * from users where lower(email) = ${clean} limit 1`;
   if (user && !user.email_verified_at) {
-    const token = user.email_verification_token || generateToken();
+    const token = generateToken();
     await sql`
       update users
-      set email_verification_token = ${token},
+      set email_verification_token = ${hashToken(token)},
           email_verification_expires_at = now() + interval '48 hours'
       where id = ${user.id}
     `;
