@@ -1,6 +1,9 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "../env.js";
 
+process.env.AWS_REQUEST_CHECKSUM_CALCULATION ??= "WHEN_REQUIRED";
+process.env.AWS_RESPONSE_CHECKSUM_VALIDATION ??= "WHEN_REQUIRED";
+
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUDIO_TYPES = new Set([
   "audio/mpeg",
@@ -20,27 +23,54 @@ export function isStorageReady() {
 }
 
 function region() {
-  return !env.bucketRegion || env.bucketRegion === "auto" ? "us-east-1" : env.bucketRegion;
+  const value = (env.bucketRegion || "auto").trim();
+  return value || "auto";
 }
 
-function client(forcePathStyle = true) {
-  if (!isStorageReady()) return null;
-  return new S3Client({
-    region: region(),
-    endpoint: env.bucketEndpoint,
-    forcePathStyle,
-    requestChecksumCalculation: "WHEN_REQUIRED",
-    responseChecksumValidation: "WHEN_REQUIRED",
-    credentials: {
-      accessKeyId: env.bucketAccessKey,
-      secretAccessKey: env.bucketSecretKey,
+function endpoint() {
+  return env.bucketEndpoint.replace(/\/$/, "");
+}
+
+function stripChecksumHeaders(s3: S3Client) {
+  s3.middlewareStack.add(
+    (next) => async (args) => {
+      const request = args.request as { headers?: Record<string, string> };
+      if (request.headers) {
+        for (const header of Object.keys(request.headers)) {
+          const lower = header.toLowerCase();
+          if (lower.includes("checksum") || lower === "content-md5") {
+            delete request.headers[header];
+          }
+        }
+      }
+      return next(args);
     },
-  });
+    { step: "finalizeRequest", name: "stripS3Checksums", priority: "low" },
+  );
+  return s3;
+}
+
+function client(forcePathStyle = false) {
+  if (!isStorageReady()) return null;
+  return stripChecksumHeaders(
+    new S3Client({
+      region: region(),
+      endpoint: endpoint(),
+      forcePathStyle,
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
+      credentials: {
+        accessKeyId: env.bucketAccessKey,
+        secretAccessKey: env.bucketSecretKey,
+      },
+    }),
+  );
 }
 
 async function putObject(key: string, body: Buffer, contentType: string) {
+  const bytes = Uint8Array.from(body);
   let last: unknown;
-  for (const forcePathStyle of [true, false]) {
+  for (const forcePathStyle of [false, true]) {
     const s3 = client(forcePathStyle);
     if (!s3) throw new Error("File storage is not ready yet.");
     try {
@@ -48,14 +78,20 @@ async function putObject(key: string, body: Buffer, contentType: string) {
         new PutObjectCommand({
           Bucket: env.bucketName,
           Key: key,
-          Body: body,
+          Body: bytes,
           ContentType: contentType,
+          ContentLength: bytes.byteLength,
         }),
       );
       return;
     } catch (err) {
       last = err;
-      console.error("[storage.put]", { key, forcePathStyle, err });
+      console.error("[storage.put]", {
+        key,
+        forcePathStyle,
+        name: err instanceof Error ? err.name : "",
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   throw last instanceof Error ? last : new Error("Could not store that file.");
@@ -122,30 +158,36 @@ function sniffAudio(buf: Buffer) {
   return null;
 }
 
-async function packImage(buf: Buffer, _type: string, maxEdge: number) {
-  const { default: sharp } = await import("sharp");
-  const pipeline = () => {
-    const image = sharp(buf, { failOn: "none" }).rotate();
-    return image;
-  };
-  const meta = await pipeline().metadata();
-  const width = meta.width ?? 0;
-  const height = meta.height ?? 0;
-  const sized = () => {
-    const image = pipeline();
-    if (width > maxEdge || height > maxEdge) {
-      return image.resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true });
-    }
-    return image;
-  };
+async function packImage(buf: Buffer, type: string, maxEdge: number) {
   try {
-    const bytes = await sized().webp({ quality: 88, effort: 4 }).toBuffer();
-    if (bytes.length > 0) return { bytes, type: "image/webp" };
-  } catch {
-    /* fall through to JPEG */
+    const { default: sharp } = await import("sharp");
+    const pipeline = () => sharp(buf, { failOn: "none" }).rotate();
+    const meta = await pipeline().metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+    const sized = () => {
+      const image = pipeline();
+      if (width > maxEdge || height > maxEdge) {
+        return image.resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true });
+      }
+      return image;
+    };
+    try {
+      const bytes = await sized().webp({ quality: 88, effort: 4 }).toBuffer();
+      if (bytes.length > 0) return { bytes, type: "image/webp" };
+    } catch {
+      /* fall through to JPEG */
+    }
+    try {
+      const bytes = await sized().jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+      if (bytes.length > 0) return { bytes, type: "image/jpeg" };
+    } catch {
+      /* keep the original bytes */
+    }
+  } catch (err) {
+    console.error("[storage.pack]", err);
   }
-  const bytes = await sized().jpeg({ quality: 88, mozjpeg: true }).toBuffer();
-  return { bytes, type: "image/jpeg" };
+  return { bytes: buf, type };
 }
 
 export function parseDataUrl(dataUrl: string) {
@@ -235,10 +277,17 @@ export async function putWorkFile(userId: string, workId: string, file: UploadBl
     await putObject(key, body, sniffed);
     return key;
   }
-  const packed = await packImage(body, sniffed, 2400);
-  const key = `works/${userId}/${workId}.${extFor(packed.type, kind)}`;
-  await putObject(key, packed.bytes, packed.type);
-  return key;
+  try {
+    const packed = await packImage(body, sniffed, 2400);
+    const key = `works/${userId}/${workId}.${extFor(packed.type, kind)}`;
+    await putObject(key, packed.bytes, packed.type);
+    return key;
+  } catch (err) {
+    console.error("[storage.work]", err);
+    const key = `works/${userId}/${workId}.${extFor(sniffed, kind)}`;
+    await putObject(key, body, sniffed);
+    return key;
+  }
 }
 
 export async function getWorkFile(key: string) {

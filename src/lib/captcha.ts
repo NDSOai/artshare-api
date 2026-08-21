@@ -22,18 +22,18 @@ export function issueCaptcha() {
 
 export function readCaptcha(token: string, answer: string) {
   const [payload, sig] = String(token || "").split(".");
-  if (!payload || !sig) return { error: "Solve the little puzzle to continue." };
+  if (!payload || !sig) return { error: "Solve the puzzle to continue." };
   const expected = sign(payload);
   const left = Buffer.from(expected);
   const right = Buffer.from(sig);
   if (left.length !== right.length || !timingSafeEqual(left, right)) {
-    return { error: "Solve the little puzzle to continue." };
+    return { error: "Solve the puzzle to continue." };
   }
   let data: Payload;
   try {
     data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Payload;
   } catch {
-    return { error: "Solve the little puzzle to continue." };
+    return { error: "Solve the puzzle to continue." };
   }
   if (!data.exp || Date.now() > data.exp) return { error: "That puzzle expired. Try a new one." };
   const n = Number(String(answer).trim());

@@ -32,11 +32,21 @@ export const env = {
   frontendUrl: publicFrontendUrl(),
   resendApiKey: process.env.RESEND_API_KEY || "",
   resendFrom: process.env.RESEND_FROM || "onboarding@resend.dev",
-  bucketEndpoint: process.env.BUCKET_ENDPOINT || process.env.ENDPOINT || "",
-  bucketName: process.env.BUCKET_NAME || process.env.BUCKET || "",
-  bucketAccessKey: process.env.BUCKET_ACCESS_KEY_ID || process.env.ACCESS_KEY_ID || "",
-  bucketSecretKey: process.env.BUCKET_SECRET_ACCESS_KEY || process.env.SECRET_ACCESS_KEY || "",
-  bucketRegion: process.env.BUCKET_REGION || process.env.REGION || "auto",
+  bucketEndpoint:
+    process.env.BUCKET_ENDPOINT ||
+    process.env.ENDPOINT ||
+    process.env.AWS_ENDPOINT_URL_S3 ||
+    process.env.AWS_ENDPOINT_URL ||
+    "",
+  bucketName: process.env.BUCKET_NAME || process.env.BUCKET || process.env.AWS_S3_BUCKET_NAME || "",
+  bucketAccessKey:
+    process.env.BUCKET_ACCESS_KEY_ID || process.env.ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || "",
+  bucketSecretKey:
+    process.env.BUCKET_SECRET_ACCESS_KEY ||
+    process.env.SECRET_ACCESS_KEY ||
+    process.env.AWS_SECRET_ACCESS_KEY ||
+    "",
+  bucketRegion: process.env.BUCKET_REGION || process.env.REGION || process.env.AWS_REGION || "auto",
   apiPublicUrl:
     process.env.API_PUBLIC_URL ||
     (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : ""),
