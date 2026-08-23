@@ -260,7 +260,7 @@ export function assertUpload(file: UploadBlob, kind: string) {
     return null;
   }
   if (kind === "music") {
-    if (!AUDIO_TYPES.has(type)) return "Use MP3 or AAC, under 20MB.";
+    if (!AUDIO_TYPES.has(type)) return "Use MP3, M4A, or AAC, under 20MB.";
     if (file.size > LIMITS.music) return "Songs must be under 20MB.";
     return null;
   }
@@ -272,7 +272,9 @@ export async function putWorkFile(userId: string, workId: string, file: UploadBl
   const body = Buffer.from(await file.arrayBuffer());
   const sniffed = kind === "music" ? sniffAudio(body) : sniffImage(body);
   if (!sniffed) {
-    throw new Error(kind === "music" ? "Use MP3 or AAC, under 20MB." : "Use JPEG, PNG, or WebP, under 3MB.");
+    throw new Error(
+      kind === "music" ? "Use MP3, M4A, or AAC, under 20MB." : "Use JPEG, PNG, or WebP, under 3MB.",
+    );
   }
   if (kind === "music") {
     const key = `works/${userId}/${workId}.${extFor(sniffed, kind)}`;
@@ -290,6 +292,19 @@ export async function putWorkFile(userId: string, workId: string, file: UploadBl
     await putObject(key, body, sniffed);
     return key;
   }
+}
+
+/** Page media at works/{user}/{work}/p{n}.{ext}; covers at .../p{n}-cover.{ext}. */
+export async function putWorkPageFile(
+  userId: string,
+  workId: string,
+  pageIndex: number,
+  file: UploadBlob,
+  kind: string,
+  asCover = false,
+) {
+  const leaf = `p${pageIndex}${asCover ? "-cover" : ""}`;
+  return putWorkFile(userId, `${workId}/${leaf}`, file, asCover ? "image" : kind);
 }
 
 export async function getWorkFile(key: string) {

@@ -4,7 +4,7 @@ import { readUserFromRequest, requireAuth, requireCatalog, type Authed } from ".
 import { notify } from "../lib/notify.js";
 import { assertCooldown, clientIp, hitIp, lastRepostAt, lastWorkAt, limited, limitPublicGet, repostsLastHour } from "../lib/rate-limit.js";
 import { parseMultipart, type FormFile } from "../lib/multipart.js";
-import { assertUpload, isStorageReady, ownMediaKey, putWorkFile } from "../lib/storage.js";
+import { assertUpload, isStorageReady, ownMediaKey, putWorkFile, putWorkPageFile } from "../lib/storage.js";
 import { consumeCaptcha } from "../lib/captcha.js";
 import { newId } from "../lib/tokens.js";
 import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
@@ -206,27 +206,163 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
   if (!existing) return c.json({ error: "Work not found." }, 404);
   if (existing.artist_id !== user.id) return c.json({ error: "You can only edit your own work." }, 403);
 
-  const body = await c.req.json<{
-    title?: string;
-    medium?: string;
-    description?: string;
-    color?: string;
-    remixable?: boolean;
-    license?: string;
-    body?: string;
-    tools?: string[];
-  }>().catch(() => ({} as Record<string, never>));
-
-  const title = clip(String(body.title ?? existing.title), 120) || existing.title;
-  const medium = clip(String(body.medium ?? existing.medium), 80) || existing.medium;
-  const description = body.description !== undefined ? clip(String(body.description), 500) : existing.description;
-  const color = String(body.color ?? existing.color).slice(0, 32);
-  const license = clip(String(body.license ?? existing.license ?? "All Rights Reserved"), 80);
-  const bodyText = body.body !== undefined ? String(body.body).slice(0, 20_000) : existing.body;
-  const tools = Array.isArray(body.tools) ? asTools(body.tools) : existing.tools ?? [];
-  const remixable = body.remixable !== undefined ? Boolean(body.remixable) : existing.remixable;
-
   try {
+    const contentType = c.req.header("content-type") || "";
+    const useForm = contentType.includes("multipart/form-data");
+
+    let title = existing.title;
+    let medium = existing.medium;
+    let description = existing.description ?? "";
+    let color = existing.color;
+    let remixable = existing.remixable;
+    let kind = existing.kind ?? "image";
+    let license = existing.license ?? "All Rights Reserved";
+    let bodyText = existing.body ?? "";
+    let tools = existing.tools ?? [];
+    let mediaUrl = existing.media_url ?? "";
+    let coverUrl = existing.cover_url ?? "";
+    let pagesRaw: unknown = undefined;
+    let sequenceLabelRaw: string | undefined;
+    let file: FormFile | null = null;
+    let cover: FormFile | null = null;
+    let formFiles: Record<string, FormFile> = {};
+
+    if (useForm) {
+      const form = await readForm(c, MAX_SEQUENCE_BYTES);
+      if (form.fields.title !== undefined) title = String(form.fields.title);
+      if (form.fields.medium !== undefined) medium = String(form.fields.medium);
+      if (form.fields.description !== undefined) description = String(form.fields.description);
+      if (form.fields.color !== undefined) color = String(form.fields.color);
+      if (form.fields.remixable !== undefined) remixable = String(form.fields.remixable) === "true";
+      if (form.fields.kind !== undefined) kind = String(form.fields.kind);
+      if (form.fields.license !== undefined) license = String(form.fields.license);
+      if (form.fields.body !== undefined) bodyText = String(form.fields.body);
+      if (form.fields.tools !== undefined) tools = asTools(form.fields.tools);
+      if (form.fields.pages !== undefined) pagesRaw = form.fields.pages;
+      if (form.fields.sequenceLabel !== undefined) sequenceLabelRaw = String(form.fields.sequenceLabel);
+      file = asUpload(form.files.file);
+      cover = asUpload(form.files.cover);
+      formFiles = form.files;
+    } else {
+      const body = await c.req.json<{
+        title?: string;
+        medium?: string;
+        description?: string;
+        color?: string;
+        remixable?: boolean;
+        kind?: string;
+        license?: string;
+        body?: string;
+        tools?: string[];
+        pages?: unknown;
+        sequenceLabel?: string;
+      }>().catch(() => ({} as Record<string, never>));
+      if (body.title !== undefined) title = String(body.title);
+      if (body.medium !== undefined) medium = String(body.medium);
+      if (body.description !== undefined) description = String(body.description);
+      if (body.color !== undefined) color = String(body.color);
+      if (body.remixable !== undefined) remixable = Boolean(body.remixable);
+      if (body.kind !== undefined) kind = String(body.kind);
+      if (body.license !== undefined) license = String(body.license);
+      if (body.body !== undefined) bodyText = String(body.body);
+      if (body.tools !== undefined) tools = asTools(body.tools);
+      if (body.pages !== undefined) pagesRaw = body.pages;
+      if (body.sequenceLabel !== undefined) sequenceLabelRaw = String(body.sequenceLabel);
+    }
+
+    title = clip(title, 120) || existing.title;
+    medium = clip(medium, 80) || existing.medium;
+    description = clip(description, 500);
+    bodyText = bodyText.slice(0, 20_000);
+    license = clip(license, 80);
+    kind = clip(kind, 20) || existing.kind || "image";
+    color = String(color).slice(0, 32);
+
+    const existingPages = storedPages(existing.pages);
+    let pages = existingPages;
+    let sequenceLabel = existing.sequence_label ?? null;
+
+    if (pagesRaw !== undefined) {
+      const incoming = parsePagesInput(pagesRaw);
+      if (!incoming) return c.json({ error: "Pages must be a JSON array." }, 400);
+      const built = await buildStoredPages({
+        userId: user.id,
+        workId: existing.id,
+        pages: incoming,
+        files: formFiles,
+        topFile: file,
+        topCover: cover,
+        existing: existingPages,
+        requireMedia: false,
+      });
+      if ("error" in built) return c.json({ error: built.error }, 400);
+      pages = built.pages;
+    } else if (file || cover) {
+      if (!isStorageReady()) {
+        return c.json({ error: "File storage is not ready yet. Add a Railway Bucket to artshare-api." }, 503);
+      }
+      const uploadKind = kind === "sequence" ? (existingPages[0]?.kind ?? "image") : kind;
+      if (file) {
+        const problem = assertUpload(file, uploadKind === "text" ? "image" : uploadKind);
+        if (problem) return c.json({ error: problem }, 400);
+        try {
+          mediaUrl = await putWorkFile(user.id, existing.id, file, uploadKind === "text" ? "image" : uploadKind);
+        } catch (err) {
+          console.error(err);
+          const message = err instanceof Error ? err.message : "";
+          if (/JPEG|PNG|WebP|MP3|M4A|AAC/i.test(message)) return c.json({ error: message }, 400);
+          return c.json({ error: "Could not store that file." }, 500);
+        }
+      }
+      if (cover) {
+        const problem = assertUpload(cover, "image");
+        if (problem) return c.json({ error: problem }, 400);
+        try {
+          coverUrl = await putWorkFile(user.id, `${existing.id}-cover`, cover, "image");
+        } catch (err) {
+          console.error(err);
+          const message = err instanceof Error ? err.message : "";
+          if (/JPEG|PNG|WebP/i.test(message)) return c.json({ error: message }, 400);
+          return c.json({ error: "Could not store that cover." }, 500);
+        }
+      }
+      if (existingPages.length) {
+        pages = existingPages.map((page, index) =>
+          index === 0
+            ? {
+                ...page,
+                mediaUrl: file ? mediaUrl || page.mediaUrl : page.mediaUrl,
+                coverUrl: cover ? coverUrl || page.coverUrl : page.coverUrl,
+              }
+            : page,
+        );
+      }
+    }
+
+    if (pages.length > 1) {
+      kind = "sequence";
+      const label =
+        sequenceLabelRaw !== undefined
+          ? clip(sequenceLabelRaw, 80)
+          : clip(existing.sequence_label ?? "", 80);
+      if (!label) return c.json({ error: "Pick a sequence label before you save." }, 400);
+      sequenceLabel = label;
+    } else if (pagesRaw !== undefined) {
+      kind = pages[0]?.kind ?? kind;
+      sequenceLabel = null;
+      if (sequenceLabelRaw !== undefined && !pages.length) sequenceLabel = null;
+    } else if (sequenceLabelRaw !== undefined) {
+      sequenceLabel = clip(sequenceLabelRaw, 80) || null;
+    }
+
+    if (pages.length) {
+      const first = pages[0];
+      mediaUrl = first.mediaUrl ?? "";
+      coverUrl = first.coverUrl ?? "";
+      if (first.kind === "text") bodyText = first.body ?? bodyText;
+      else if (pagesRaw !== undefined) bodyText = first.body ?? "";
+    }
+
     const [work] = await sql<WorkRow[]>`
       update works set
         title = ${title},
@@ -236,8 +372,13 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
         remixable = ${remixable},
         download_permitted = ${remixable},
         tools = ${sql.json(tools)},
+        kind = ${kind},
         license = ${license},
-        body = ${bodyText || null}
+        body = ${bodyText || null},
+        media_url = ${mediaUrl || null},
+        cover_url = ${coverUrl || null},
+        pages = ${sql.json(pages)},
+        sequence_label = ${sequenceLabel}
       where id = ${existing.id}
       returning *
     `;
@@ -252,7 +393,8 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
     });
   } catch (err) {
     console.error("[works.update]", err);
-    return c.json({ error: "Could not save that work." }, 500);
+    const fail = publishFail(err);
+    return c.json({ error: fail.error }, fail.status);
   }
 });
 
@@ -330,20 +472,203 @@ function asUpload(value: FormFile | undefined): FormFile | null {
 }
 
 const MAX_PUBLISH_BYTES = 22 * 1024 * 1024;
+const MAX_SEQUENCE_BYTES = 100 * 1024 * 1024;
 
-async function readForm(c: {
-  req: {
-    header: (name: string) => string | undefined;
-    arrayBuffer: () => Promise<ArrayBuffer>;
+type PageKind = "image" | "text" | "music";
+
+type PageInput = {
+  id: string;
+  kind: PageKind;
+  body?: string;
+  h?: number;
+  w?: number;
+};
+
+type StoredPage = {
+  id: string;
+  kind: PageKind;
+  body?: string;
+  mediaUrl?: string;
+  coverUrl?: string;
+  h?: number;
+  w?: number;
+};
+
+function asPageKind(value: unknown): PageKind | null {
+  const kind = String(value ?? "");
+  if (kind === "image" || kind === "text" || kind === "music") return kind;
+  return null;
+}
+
+function parsePagesInput(raw: unknown): PageInput[] | null {
+  let value = raw;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(value)) return null;
+  const out: PageInput[] = [];
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const kind = asPageKind(row.kind);
+    if (!kind) continue;
+    const h = row.h != null ? Number(row.h) : NaN;
+    const w = row.w != null ? Number(row.w) : NaN;
+    out.push({
+      id: clip(String(row.id || `page-${index + 1}`), 80) || `page-${index + 1}`,
+      kind,
+      body: row.body != null ? String(row.body).slice(0, 20_000) : undefined,
+      h: Number.isFinite(h) ? h : undefined,
+      w: Number.isFinite(w) ? w : undefined,
+    });
+  }
+  return out.slice(0, 40);
+}
+
+function storedPages(raw: unknown): StoredPage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: StoredPage[] = [];
+  for (const [index, item] of raw.entries()) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const kind = asPageKind(row.kind);
+    if (!kind) continue;
+    const h = row.h != null ? Number(row.h) : NaN;
+    const w = row.w != null ? Number(row.w) : NaN;
+    const media =
+      ownMediaKey(String(row.mediaUrl ?? row.media_url ?? "")) ||
+      (typeof row.mediaUrl === "string" && isSafeStorageKey(row.mediaUrl) ? row.mediaUrl : "") ||
+      (typeof row.media_url === "string" && isSafeStorageKey(row.media_url) ? row.media_url : "");
+    const cover =
+      ownMediaKey(String(row.coverUrl ?? row.cover_url ?? "")) ||
+      (typeof row.coverUrl === "string" && isSafeStorageKey(row.coverUrl) ? row.coverUrl : "") ||
+      (typeof row.cover_url === "string" && isSafeStorageKey(row.cover_url) ? row.cover_url : "");
+    out.push({
+      id: String(row.id || `page-${index + 1}`),
+      kind,
+      body: row.body != null && String(row.body) ? String(row.body).slice(0, 20_000) : undefined,
+      mediaUrl: media || undefined,
+      coverUrl: cover || undefined,
+      h: Number.isFinite(h) ? h : undefined,
+      w: Number.isFinite(w) ? w : undefined,
+    });
+  }
+  return out;
+}
+
+function isSafeStorageKey(value: string) {
+  return /^(works|avatars|banners|collections)\/[a-zA-Z0-9._/-]+$/.test(value) && !value.includes("..");
+}
+
+function pageUpload(
+  files: Record<string, FormFile>,
+  index: number,
+  topFile: FormFile | null,
+  topCover: FormFile | null,
+) {
+  return {
+    media: asUpload(files[`page${index}`]) ?? (index === 0 ? topFile : null),
+    cover: asUpload(files[`page${index}Cover`]) ?? (index === 0 ? topCover : null),
   };
-}) {
+}
+
+async function buildStoredPages(opts: {
+  userId: string;
+  workId: string;
+  pages: PageInput[];
+  files: Record<string, FormFile>;
+  topFile: FormFile | null;
+  topCover: FormFile | null;
+  existing?: StoredPage[];
+  requireMedia: boolean;
+}): Promise<{ pages: StoredPage[] } | { error: string }> {
+  const { userId, workId, pages, files, topFile, topCover, existing = [], requireMedia } = opts;
+  if (!pages.length) return { pages: [] };
+
+  const needsUpload = pages.some((page, index) => {
+    const upload = pageUpload(files, index, topFile, topCover);
+    return Boolean(upload.media || upload.cover);
+  });
+  if (needsUpload && !isStorageReady()) {
+    return { error: "File storage is not ready yet. Add a Railway Bucket to artshare-api." };
+  }
+
+  const out: StoredPage[] = [];
+  for (const [index, page] of pages.entries()) {
+    const prev = existing.find((item) => item.id === page.id) ?? existing[index];
+    const upload = pageUpload(files, index, topFile, topCover);
+    let mediaUrl = prev?.mediaUrl;
+    let coverUrl = prev?.coverUrl;
+    const body = page.kind === "text" ? (page.body ?? "").trim() : page.body?.trim() || undefined;
+
+    if (page.kind === "text") {
+      if (!body && requireMedia) return { error: "Write each text page before you publish." };
+      if (!body && !prev?.body) return { error: "Write each text page before you publish." };
+    } else if (upload.media) {
+      const problem = assertUpload(upload.media, page.kind);
+      if (problem) return { error: problem };
+      try {
+        mediaUrl = await putWorkPageFile(userId, workId, index, upload.media, page.kind);
+      } catch (err) {
+        console.error(err);
+        const message = err instanceof Error ? err.message : "";
+        if (/JPEG|PNG|WebP|MP3|M4A|AAC/i.test(message)) return { error: message };
+        return { error: "Could not store that file." };
+      }
+    } else if (requireMedia && !mediaUrl) {
+      return {
+        error: page.kind === "music" ? "Add the song before you publish." : "Add a photo before you publish.",
+      };
+    }
+
+    if (upload.cover && page.kind !== "image") {
+      const problem = assertUpload(upload.cover, "image");
+      if (problem) return { error: problem };
+      try {
+        coverUrl = await putWorkPageFile(userId, workId, index, upload.cover, "image", true);
+      } catch (err) {
+        console.error(err);
+        const message = err instanceof Error ? err.message : "";
+        if (/JPEG|PNG|WebP/i.test(message)) return { error: message };
+        return { error: "Could not store that cover." };
+      }
+    }
+
+    out.push({
+      id: page.id,
+      kind: page.kind,
+      body: page.kind === "text" ? body || prev?.body : body,
+      mediaUrl,
+      coverUrl: page.kind === "image" ? undefined : coverUrl,
+      h: page.h ?? prev?.h,
+      w: page.w ?? prev?.w,
+    });
+  }
+  return { pages: out };
+}
+
+async function readForm(
+  c: {
+    req: {
+      header: (name: string) => string | undefined;
+      arrayBuffer: () => Promise<ArrayBuffer>;
+    };
+  },
+  maxBytes = MAX_PUBLISH_BYTES,
+) {
   const length = Number(c.req.header("content-length") || 0);
-  if (length > MAX_PUBLISH_BYTES) {
+  if (length > maxBytes) {
     throw new Error("That file is too large.");
   }
   const type = c.req.header("content-type") || "";
   const buf = Buffer.from(await c.req.arrayBuffer());
-  if (buf.byteLength > MAX_PUBLISH_BYTES) {
+  if (buf.byteLength > maxBytes) {
     throw new Error("That file is too large.");
   }
   if (!type.includes("multipart/form-data")) {
@@ -408,10 +733,13 @@ workRoutes.post("/", requireAuth, async (c) => {
   let file: FormFile | null = null;
   let cover: FormFile | null = null;
   let coverUrl = "";
+  let pagesRaw: unknown = undefined;
+  let sequenceLabelRaw = "";
+  let formFiles: Record<string, FormFile> = {};
 
   const useForm = contentType.includes("multipart/form-data") || !contentType.includes("json");
   if (useForm) {
-    const form = await readForm(c);
+    const form = await readForm(c, MAX_SEQUENCE_BYTES);
     title = String(form.fields.title || title);
     medium = String(form.fields.medium || medium);
     description = String(form.fields.description || "");
@@ -424,8 +752,11 @@ workRoutes.post("/", requireAuth, async (c) => {
     tools = asTools(form.fields.tools);
     captchaToken = String(form.fields.captchaToken || "");
     captchaAnswer = String(form.fields.captchaAnswer || "");
+    pagesRaw = form.fields.pages;
+    sequenceLabelRaw = String(form.fields.sequenceLabel || "");
     file = asUpload(form.files.file);
     cover = asUpload(form.files.cover);
+    formFiles = form.files;
   } else {
     const body = await c.req.json<{
       title?: string;
@@ -438,6 +769,8 @@ workRoutes.post("/", requireAuth, async (c) => {
       license?: string;
       body?: string;
       tools?: string[];
+      pages?: unknown;
+      sequenceLabel?: string;
       captchaToken?: string;
       captchaAnswer?: string;
     }>();
@@ -451,6 +784,8 @@ workRoutes.post("/", requireAuth, async (c) => {
     license = body.license || license;
     bodyText = body.body || "";
     tools = asTools(body.tools);
+    pagesRaw = body.pages;
+    sequenceLabelRaw = String(body.sequenceLabel || "");
     captchaToken = body.captchaToken || "";
     captchaAnswer = body.captchaAnswer || "";
   }
@@ -467,35 +802,74 @@ workRoutes.post("/", requireAuth, async (c) => {
   color = String(color).slice(0, 32);
 
   const workId = newId("work");
-  if (file || cover) {
-    if (!isStorageReady()) {
-      return c.json({ error: "File storage is not ready yet. Add a Railway Bucket to artshare-api." }, 503);
-    }
+  const pageInputs = pagesRaw !== undefined ? parsePagesInput(pagesRaw) : [];
+  if (pagesRaw !== undefined && pageInputs === null) {
+    return c.json({ error: "Pages must be a JSON array." }, 400);
   }
-  if (file) {
-    const problem = assertUpload(file, kind);
-    if (problem) return c.json({ error: problem }, 400);
-    try {
-      mediaUrl = await putWorkFile(user.id, workId, file, kind);
-    } catch (err) {
-      console.error(err);
-      const message = err instanceof Error ? err.message : "";
-      if (/JPEG|PNG|WebP|MP3|AAC/i.test(message)) return c.json({ error: message }, 400);
-      return c.json({ error: "Could not store that file." }, 500);
+
+  let pages: StoredPage[] = [];
+  let sequenceLabel: string | null = null;
+
+  if (pageInputs && pageInputs.length > 0) {
+    if (pageInputs.length > 1) {
+      kind = "sequence";
+      sequenceLabel = clip(sequenceLabelRaw, 80);
+      if (!sequenceLabel) {
+        return c.json({ error: "Pick a sequence label before you publish." }, 400);
+      }
+    } else {
+      kind = pageInputs[0].kind;
     }
-  } else if ((kind === "image" || kind === "music") && !mediaUrl) {
-    return c.json({ error: kind === "music" ? "Add the song before you publish." : "Add a photo before you publish." }, 400);
-  }
-  if (cover) {
-    const problem = assertUpload(cover, "image");
-    if (problem) return c.json({ error: problem }, 400);
-    try {
-      coverUrl = await putWorkFile(user.id, `${workId}-cover`, cover, "image");
-    } catch (err) {
-      console.error(err);
-      const message = err instanceof Error ? err.message : "";
-      if (/JPEG|PNG|WebP/i.test(message)) return c.json({ error: message }, 400);
-      return c.json({ error: "Could not store that cover." }, 500);
+
+    const built = await buildStoredPages({
+      userId: user.id,
+      workId,
+      pages: pageInputs,
+      files: formFiles,
+      topFile: file,
+      topCover: cover,
+      requireMedia: true,
+    });
+    if ("error" in built) return c.json({ error: built.error }, 400);
+    pages = built.pages;
+    const first = pages[0];
+    mediaUrl = first?.mediaUrl ?? "";
+    coverUrl = first?.coverUrl ?? "";
+    bodyText = first?.kind === "text" ? first.body ?? "" : first?.body ?? bodyText;
+  } else {
+    if (kind === "sequence") {
+      return c.json({ error: "Add at least two pages before you publish a sequence." }, 400);
+    }
+    if (file || cover) {
+      if (!isStorageReady()) {
+        return c.json({ error: "File storage is not ready yet. Add a Railway Bucket to artshare-api." }, 503);
+      }
+    }
+    if (file) {
+      const problem = assertUpload(file, kind);
+      if (problem) return c.json({ error: problem }, 400);
+      try {
+        mediaUrl = await putWorkFile(user.id, workId, file, kind);
+      } catch (err) {
+        console.error(err);
+        const message = err instanceof Error ? err.message : "";
+        if (/JPEG|PNG|WebP|MP3|M4A|AAC/i.test(message)) return c.json({ error: message }, 400);
+        return c.json({ error: "Could not store that file." }, 500);
+      }
+    } else if ((kind === "image" || kind === "music") && !mediaUrl) {
+      return c.json({ error: kind === "music" ? "Add the song before you publish." : "Add a photo before you publish." }, 400);
+    }
+    if (cover) {
+      const problem = assertUpload(cover, "image");
+      if (problem) return c.json({ error: problem }, 400);
+      try {
+        coverUrl = await putWorkFile(user.id, `${workId}-cover`, cover, "image");
+      } catch (err) {
+        console.error(err);
+        const message = err instanceof Error ? err.message : "";
+        if (/JPEG|PNG|WebP/i.test(message)) return c.json({ error: message }, 400);
+        return c.json({ error: "Could not store that cover." }, 500);
+      }
     }
   }
 
@@ -504,13 +878,13 @@ workRoutes.post("/", requireAuth, async (c) => {
     const inserted = await sql<WorkRow[]>`
       insert into works (
         id, artist_id, title, medium, description, media_url, color, remixable,
-        download_permitted, tools, kind, license, body, cover_url
+        download_permitted, tools, kind, license, body, cover_url, pages, sequence_label
       )
       values (
         ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
         ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
         ${sql.json(tools)}, ${kind}, ${license}, ${bodyText || null},
-        ${coverUrl || null}
+        ${coverUrl || null}, ${sql.json(pages)}, ${sequenceLabel}
       )
       returning *
     `;

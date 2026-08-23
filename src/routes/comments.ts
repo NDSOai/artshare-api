@@ -26,6 +26,7 @@ function publicComment(row: {
   text: string;
   pin_x: number | null;
   pin_y: number | null;
+  page_id?: string | null;
   created_at: Date;
   author: string;
   author_handle?: string;
@@ -37,6 +38,7 @@ function publicComment(row: {
     authorHandle: row.author_handle,
     text: row.text,
     pinnedTo: row.pin_x != null && row.pin_y != null ? { x: row.pin_x, y: row.pin_y } : null,
+    pageId: row.page_id || undefined,
     timestamp: row.created_at.toISOString(),
     revisions: asRevisions(row.revisions),
   };
@@ -49,13 +51,14 @@ commentRoutes.get("/:workId/comments", requireCatalog, async (c) => {
       text: string;
       pin_x: number | null;
       pin_y: number | null;
+      page_id: string | null;
       created_at: Date;
       author: string;
       author_handle: string;
       revisions: unknown;
     }[]
   >`
-    select c.id, c.text, c.pin_x, c.pin_y, c.created_at, c.revisions, u.name as author, u.handle as author_handle
+    select c.id, c.text, c.pin_x, c.pin_y, c.page_id, c.created_at, c.revisions, u.name as author, u.handle as author_handle
     from comments c
     join users u on u.id = c.author_id
     where c.work_id = ${c.req.param("workId")}
@@ -74,9 +77,17 @@ commentRoutes.post("/:workId/comments", requireAuth, async (c) => {
     select id, artist_id, title from works where id = ${workId} limit 1
   `;
   if (!work) return c.json({ error: "Work not found." }, 404);
-  const body = await c.req.json<{ text?: string; pinnedTo?: { x: number; y: number } | null }>();
+  const body = await c.req.json<{
+    text?: string;
+    pinnedTo?: { x: number; y: number } | null;
+    pageId?: string | null;
+  }>();
   const text = (body.text || "").trim().slice(0, 500);
   if (!text) return c.json({ error: "Write a comment first." }, 400);
+  const pageId =
+    body.pageId != null && String(body.pageId).trim()
+      ? String(body.pageId).trim().slice(0, 80)
+      : null;
   const tooSoon = await assertCooldown(await lastCommentAt(user.id), 15_000, "comment");
   if (tooSoon) return limited(c, tooSoon);
   if ((await commentsLastHour(user.id)) >= 20) {
@@ -84,14 +95,21 @@ commentRoutes.post("/:workId/comments", requireAuth, async (c) => {
   }
 
   const [row] = await sql<
-    { id: string; text: string; pin_x: number | null; pin_y: number | null; created_at: Date }[]
+    {
+      id: string;
+      text: string;
+      pin_x: number | null;
+      pin_y: number | null;
+      page_id: string | null;
+      created_at: Date;
+    }[]
   >`
-    insert into comments (id, work_id, author_id, text, pin_x, pin_y)
+    insert into comments (id, work_id, author_id, text, pin_x, pin_y, page_id)
     values (
       ${newId("c")}, ${workId}, ${user.id}, ${text},
-      ${body.pinnedTo?.x ?? null}, ${body.pinnedTo?.y ?? null}
+      ${body.pinnedTo?.x ?? null}, ${body.pinnedTo?.y ?? null}, ${pageId}
     )
-    returning id, text, pin_x, pin_y, created_at
+    returning id, text, pin_x, pin_y, page_id, created_at
   `;
 
   await notify({
@@ -126,11 +144,12 @@ commentRoutes.patch("/:workId/comments/:id", requireAuth, async (c) => {
       text: string;
       pin_x: number | null;
       pin_y: number | null;
+      page_id: string | null;
       created_at: Date;
       revisions: unknown;
     }[]
   >`
-    select id, author_id, text, pin_x, pin_y, created_at, revisions
+    select id, author_id, text, pin_x, pin_y, page_id, created_at, revisions
     from comments
     where id = ${id} and work_id = ${workId}
     limit 1
@@ -163,6 +182,7 @@ commentRoutes.patch("/:workId/comments/:id", requireAuth, async (c) => {
       text: string;
       pin_x: number | null;
       pin_y: number | null;
+      page_id: string | null;
       created_at: Date;
       revisions: unknown;
     }[]
@@ -170,7 +190,7 @@ commentRoutes.patch("/:workId/comments/:id", requireAuth, async (c) => {
     update comments
     set text = ${text}, revisions = ${sql.json(nextRevisions)}
     where id = ${existing.id}
-    returning id, text, pin_x, pin_y, created_at, revisions
+    returning id, text, pin_x, pin_y, page_id, created_at, revisions
   `;
   return c.json({
     comment: publicComment({

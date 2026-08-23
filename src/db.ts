@@ -58,6 +58,8 @@ export type WorkRow = {
   license?: string;
   body?: string | null;
   cover_url?: string | null;
+  pages?: unknown;
+  sequence_label?: string | null;
   created_at: Date;
   artist_name?: string;
   artist_handle?: string;
@@ -174,7 +176,40 @@ function repairTools(tools: string[] | null | undefined) {
   });
 }
 
+function publicPages(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  const out: {
+    id: string;
+    kind: string;
+    body?: string;
+    mediaUrl?: string;
+    coverUrl?: string;
+    h?: number;
+    w?: number;
+  }[] = [];
+  for (const [index, item] of raw.entries()) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const kind = String(row.kind ?? "");
+    if (kind !== "image" && kind !== "text" && kind !== "music") continue;
+    const h = row.h != null ? Number(row.h) : NaN;
+    const w = row.w != null ? Number(row.w) : NaN;
+    const body = row.body != null ? String(row.body) : "";
+    out.push({
+      id: String(row.id || `page-${index + 1}`),
+      kind,
+      body: body || undefined,
+      mediaUrl: publicMediaUrl(String(row.mediaUrl ?? row.media_url ?? "") || null),
+      coverUrl: publicMediaUrl(String(row.coverUrl ?? row.cover_url ?? "") || null),
+      h: Number.isFinite(h) ? h : undefined,
+      w: Number.isFinite(w) ? w : undefined,
+    });
+  }
+  return out;
+}
+
 export function publicWork(work: PublicWorkRow) {
+  const pages = publicPages(work.pages);
   return {
     id: work.id,
     title: work.title,
@@ -194,9 +229,11 @@ export function publicWork(work: PublicWorkRow) {
     downloadPermitted: work.download_permitted,
     mediaUrl: publicMediaUrl(work.media_url),
     coverUrl: publicMediaUrl(work.cover_url),
-    kind: work.kind ?? "image",
+    kind: pages.length > 1 ? "sequence" : (work.kind ?? "image"),
     license: work.license ?? "All Rights Reserved",
     body: work.body ?? undefined,
+    pages: pages.length ? pages : undefined,
+    sequenceLabel: work.sequence_label?.trim() || undefined,
     repostedBy: work.reposted_by || undefined,
     repostedByName: work.reposted_by_name || undefined,
     repostCaption: work.repost_caption?.trim() || undefined,

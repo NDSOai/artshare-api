@@ -62,6 +62,8 @@ alter table works add column if not exists kind text not null default 'image';
 alter table works add column if not exists license text not null default 'All Rights Reserved';
 alter table works add column if not exists body text;
 alter table works add column if not exists cover_url text;
+alter table works add column if not exists pages jsonb not null default '[]'::jsonb;
+alter table works add column if not exists sequence_label text;
 
 create table if not exists comments (
   id text primary key,
@@ -74,6 +76,7 @@ create table if not exists comments (
 );
 
 alter table comments add column if not exists revisions jsonb not null default '[]'::jsonb;
+alter table comments add column if not exists page_id text;
 
 create table if not exists follows (
   follower_id text not null references users(id) on delete cascade,
