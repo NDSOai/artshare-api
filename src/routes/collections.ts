@@ -74,17 +74,25 @@ function publicCollection(row: CollectionRow, extra: Record<string, unknown> = {
   };
 }
 
-async function coverFromWork(workId: string | null, collectionId: string) {
+async function coverFromWork(workId: string | null, collectionId: string, ownerId?: string) {
   if (!workId) return { coverUrl: null as string | null, coverWorkId: null as string | null };
-  const [work] = await sql<{ id: string; kind: string | null; media_url: string | null; cover_url: string | null }[]>`
+  const [inCollection] = await sql<{ id: string; kind: string | null; media_url: string | null; cover_url: string | null }[]>`
     select w.id, w.kind, w.media_url, w.cover_url
     from works w
     join collection_works cw on cw.work_id = w.id
     where w.id = ${workId} and cw.collection_id = ${collectionId}
     limit 1
   `;
-  if (!work) return { coverUrl: null as string | null, coverWorkId: null as string | null };
-  return { coverUrl: workImageKey(work), coverWorkId: work.id };
+  if (inCollection) return { coverUrl: workImageKey(inCollection), coverWorkId: inCollection.id };
+  if (!ownerId) return { coverUrl: null as string | null, coverWorkId: null as string | null };
+  const [owned] = await sql<{ id: string; kind: string | null; media_url: string | null; cover_url: string | null }[]>`
+    select id, kind, media_url, cover_url
+    from works
+    where id = ${workId} and artist_id = ${ownerId}
+    limit 1
+  `;
+  if (!owned) return { coverUrl: null as string | null, coverWorkId: null as string | null };
+  return { coverUrl: workImageKey(owned), coverWorkId: owned.id };
 }
 
 async function resolveCover(
@@ -96,7 +104,7 @@ async function resolveCover(
   incomingWorkId: string | null | undefined,
 ) {
   if (incomingWorkId !== undefined && incomingWorkId) {
-    const fromWork = await coverFromWork(incomingWorkId, collectionId);
+    const fromWork = await coverFromWork(incomingWorkId, collectionId, ownerId);
     if (fromWork.coverWorkId) return fromWork;
   }
   if (incomingWorkId === null) {
@@ -117,6 +125,9 @@ async function resolveCover(
   }
   const own = ownMediaKey(incomingUrl);
   if (own) return { coverUrl: own, coverWorkId: incomingWorkId ?? null };
+  if (incomingWorkId) {
+    return { coverUrl: currentUrl, coverWorkId: incomingWorkId };
+  }
   return { coverUrl: currentUrl, coverWorkId: incomingWorkId === undefined ? currentWorkId : incomingWorkId };
 }
 

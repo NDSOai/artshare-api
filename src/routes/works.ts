@@ -378,7 +378,11 @@ function asTools(value: unknown): string[] {
     return [];
   })();
   return raw
-    .map((item) => item.trim().slice(0, 32))
+    .map((item) => {
+      const t = item.trim();
+      if (t.startsWith("gear:")) return t.slice(0, 160);
+      return t.slice(0, 32);
+    })
     .filter(Boolean)
     .slice(0, 20);
 }

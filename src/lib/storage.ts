@@ -122,8 +122,10 @@ export function isSafeMediaKey(key: string) {
 
 export function ownMediaKey(value: string | null | undefined) {
   if (!value) return null;
-  const trimmed = value.trim();
+  const trimmed = value.trim().split("?")[0].split("#")[0];
   if (isSafeMediaKey(trimmed)) return trimmed;
+  const media = /\/media\/((?:works|avatars|banners|collections)\/[a-zA-Z0-9._/-]+)$/.exec(trimmed);
+  if (media && isSafeMediaKey(media[1])) return media[1];
   if (trimmed.startsWith("/media/")) {
     const key = trimmed.slice("/media/".length);
     return isSafeMediaKey(key) ? key : null;

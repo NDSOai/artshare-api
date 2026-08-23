@@ -162,6 +162,18 @@ type PublicWorkRow = WorkRow & {
   repost_caption?: string | null;
 };
 
+function repairTools(tools: string[] | null | undefined) {
+  if (!Array.isArray(tools)) return [];
+  return tools.map((item) => {
+    if (/^apple i$/i.test(item.trim())) return "Apple iPhone";
+    if (!item.startsWith("gear:")) return item;
+    return item
+      .replace(/\/Other\/Apple i$/i, "/phone/Apple/iPhone")
+      .replace(/\/iPhone\/i$/i, "/iPhone")
+      .replace(/\/Apple\/i$/i, "/Apple/iPhone");
+  });
+}
+
 export function publicWork(work: PublicWorkRow) {
   return {
     id: work.id,
@@ -177,7 +189,7 @@ export function publicWork(work: PublicWorkRow) {
     cheers: work.cheer_count ?? 0,
     skips: work.skips ?? 0,
     date: workDate(work.created_at),
-    tools: work.tools ?? [],
+    tools: repairTools(work.tools),
     description: work.description ?? undefined,
     downloadPermitted: work.download_permitted,
     mediaUrl: publicMediaUrl(work.media_url),

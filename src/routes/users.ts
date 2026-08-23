@@ -103,6 +103,19 @@ function asSocialLinks(value: unknown) {
   return out;
 }
 
+function workImageKey(work: { kind?: string | null; media_url?: string | null; cover_url?: string | null }) {
+  const kind = work.kind ?? "image";
+  if (kind === "music" || kind === "text") return work.cover_url || work.media_url || null;
+  return work.media_url || work.cover_url || null;
+}
+
+async function bannerFromWork(userId: string, workId: string) {
+  const [work] = await sql<{ kind: string | null; media_url: string | null; cover_url: string | null }[]>`
+    select kind, media_url, cover_url from works where id = ${workId} and artist_id = ${userId} limit 1
+  `;
+  return work ? workImageKey(work) : null;
+}
+
 async function resolvePhoto(userId: string, current: string | null, incoming?: string) {
   if (incoming === undefined) return current;
   if (!incoming) return null;
@@ -117,7 +130,16 @@ async function resolvePhoto(userId: string, current: string | null, incoming?: s
   return current;
 }
 
-async function resolveBanner(userId: string, current: string | null, incoming?: string) {
+async function resolveBanner(
+  userId: string,
+  current: string | null,
+  incoming?: string,
+  incomingWorkId?: string | null,
+) {
+  if (incomingWorkId) {
+    const fromWork = await bannerFromWork(userId, incomingWorkId);
+    if (fromWork) return fromWork;
+  }
   if (incoming === undefined) return current;
   if (!incoming) return null;
   if (incoming.startsWith("data:")) {
@@ -157,6 +179,7 @@ userRoutes.patch("/me", requireAuth, async (c) => {
       bio?: string;
       photoUrl?: string;
       bannerUrl?: string;
+      bannerWorkId?: string | null;
       bannerPosition?: number;
       stripeColor?: string;
       mediums?: string[];
@@ -172,7 +195,7 @@ userRoutes.patch("/me", requireAuth, async (c) => {
     const pinnedWorkIds = asStringList(body.pinnedWorkIds ?? current.pinned_work_ids, 3);
     const socialLinks = asSocialLinks(body.socialLinks ?? current.social_links);
     const photoUrl = await resolvePhoto(current.id, current.photo_url, body.photoUrl);
-    const bannerUrl = await resolveBanner(current.id, current.banner_url, body.bannerUrl);
+    const bannerUrl = await resolveBanner(current.id, current.banner_url, body.bannerUrl, body.bannerWorkId);
     const bannerPosition = bannerUrl
       ? clampBannerPosition(body.bannerPosition ?? current.banner_position)
       : 50;
