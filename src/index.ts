@@ -45,8 +45,9 @@ app.use(
   "*",
   cors({
     origin: (origin) => (origin && allowedOrigins.has(origin) ? origin : null),
-    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowMethods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization", "Range"],
+    exposeHeaders: ["Accept-Ranges", "Content-Length", "Content-Range", "Content-Type"],
     credentials: true,
   }),
 );

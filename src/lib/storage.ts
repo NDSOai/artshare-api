@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "../env.js";
 
 process.env.AWS_REQUEST_CHECKSUM_CALCULATION ??= "WHEN_REQUIRED";
@@ -307,14 +307,26 @@ export async function putWorkPageFile(
   return putWorkFile(userId, `${workId}/${leaf}`, file, asCover ? "image" : kind);
 }
 
-export async function getWorkFile(key: string) {
+export async function getWorkFile(key: string, range?: string) {
   const s3 = client();
   if (!s3) return null;
   const obj = await s3.send(
     new GetObjectCommand({
       Bucket: env.bucketName,
       Key: key,
+      ...(range ? { Range: range } : {}),
     }),
   );
   return obj;
+}
+
+export async function headWorkFile(key: string) {
+  const s3 = client();
+  if (!s3) return null;
+  return s3.send(
+    new HeadObjectCommand({
+      Bucket: env.bucketName,
+      Key: key,
+    }),
+  );
 }
