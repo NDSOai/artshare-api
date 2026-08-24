@@ -241,4 +241,9 @@ create index if not exists error_events_occurred_idx on error_events (occurred_a
 create index if not exists error_events_status_idx on error_events (status, occurred_at desc);
 create index if not exists error_events_user_idx on error_events (user_id, occurred_at desc);
 
+alter table error_events add column if not exists request_id text;
+alter table error_events add column if not exists http_status integer;
+alter table error_events add column if not exists route text;
+create index if not exists error_events_request_idx on error_events (request_id);
+
 alter table notifications add column if not exists error_code text;

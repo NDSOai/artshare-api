@@ -21,6 +21,7 @@ import { initMessageCrypto } from "./lib/crypto-message.js";
 import { backfillInvitePacks } from "./lib/invites.js";
 import { rekeyMessages } from "./lib/message-purge.js";
 import { robotsTxt } from "./lib/ai-crawlers.js";
+import { mintRequestId } from "./lib/request-id.js";
 
 const app = new Hono();
 
@@ -36,22 +37,50 @@ const allowedOrigins = new Set(
 );
 
 app.use("*", logger());
-app.use("*", async (c, next) => {
-  await next();
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header("X-Frame-Options", "DENY");
-  c.header("Referrer-Policy", "no-referrer");
-});
 app.use(
   "*",
   cors({
     origin: (origin) => (origin && allowedOrigins.has(origin) ? origin : null),
     allowMethods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "Range"],
-    exposeHeaders: ["Accept-Ranges", "Content-Length", "Content-Range", "Content-Type"],
+    allowHeaders: ["Content-Type", "Authorization", "Range", "X-Request-Id"],
+    exposeHeaders: [
+      "Accept-Ranges",
+      "Content-Length",
+      "Content-Range",
+      "Content-Type",
+      "X-Request-Id",
+    ],
     credentials: true,
   }),
 );
+app.use("*", async (c, next) => {
+  const requestId = mintRequestId(c.req.header("x-request-id"));
+  c.set("requestId", requestId);
+  await next();
+  c.header("X-Request-Id", requestId);
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("X-Frame-Options", "DENY");
+  c.header("Referrer-Policy", "no-referrer");
+  if (c.res.status < 500) return;
+  console.error(`[req ${requestId}] ${c.req.method} ${c.req.path} ${c.res.status}`);
+  const type = c.res.headers.get("content-type") || "";
+  if (!type.includes("application/json")) return;
+  try {
+    const body = await c.res.json();
+    const payload =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? { ...body, requestId }
+        : { error: "Something went wrong on our side. Try again in a moment.", requestId };
+    const res = c.json(payload, c.res.status as 500);
+    res.headers.set("X-Request-Id", requestId);
+    res.headers.set("X-Content-Type-Options", "nosniff");
+    res.headers.set("X-Frame-Options", "DENY");
+    res.headers.set("Referrer-Policy", "no-referrer");
+    return res;
+  } catch {
+    /* keep the original 5xx body */
+  }
+});
 
 app.get("/health", (c) =>
   c.json({ ok: true, service: "artshare-api", storage: isStorageReady(), publish: "buffer" }),
@@ -61,8 +90,12 @@ app.get("/robots.txt", (c) =>
 );
 
 app.onError((err, c) => {
-  console.error(err);
-  return c.json({ error: "Something went wrong on our side. Try again in a moment." }, 500);
+  const requestId = c.get("requestId") || mintRequestId();
+  console.error(`[req ${requestId}]`, c.req.method, c.req.path, err);
+  return c.json(
+    { error: "Something went wrong on our side. Try again in a moment.", requestId },
+    500,
+  );
 });
 
 app.route("/admin", adminRoutes);

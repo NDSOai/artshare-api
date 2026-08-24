@@ -5,6 +5,7 @@ import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js
 import { notify } from "../lib/notify.js";
 import { clientIp, hitIpDurable, limited } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
+import { parseHttpStatus, parseRequestId, parseRoute } from "../lib/request-id.js";
 
 export const errorRoutes = new Hono<{ Variables: Authed }>();
 
@@ -29,6 +30,9 @@ type ErrorRow = {
   note: string | null;
   status: string;
   count: number;
+  request_id: string | null;
+  http_status: number | null;
+  route: string | null;
 };
 
 function clip(value: unknown, max: number) {
@@ -55,6 +59,9 @@ function publicError(row: ErrorRow) {
     note: row.note || undefined,
     status: row.status,
     count: row.count,
+    requestId: row.request_id || undefined,
+    httpStatus: row.http_status ?? undefined,
+    route: row.route || undefined,
   };
 }
 
@@ -82,10 +89,13 @@ errorRoutes.post("/", async (c) => {
 
   const user = await readUserFromRequest(c);
   const message = clip(body.message, 280) || "Something went wrong on our side.";
-  const path = clip(body.path, 180) || "/";
+  const path = clip(String(body.path ?? "").split("?")[0], 180) || "/";
   const ua = clip(body.ua, 280);
   const viewport = clip(body.viewport, 32);
   const family = familyOf(body.family);
+  const requestId = parseRequestId(body.requestId) || null;
+  const httpStatus = parseHttpStatus(body.httpStatus);
+  const route = parseRoute(body.route) || null;
   const occurredRaw = typeof body.occurredAt === "string" ? Date.parse(body.occurredAt) : NaN;
   const occurredAt = Number.isFinite(occurredRaw) ? new Date(occurredRaw) : new Date();
 
@@ -96,7 +106,10 @@ errorRoutes.post("/", async (c) => {
       set count = count + 1,
           occurred_at = ${occurredAt},
           message = ${message},
-          path = ${path}
+          path = ${path},
+          request_id = coalesce(${requestId}, request_id),
+          http_status = coalesce(${httpStatus}, http_status),
+          route = coalesce(${route}, route)
       where code = ${existing.code}
       returning *
     `;
@@ -105,7 +118,8 @@ errorRoutes.post("/", async (c) => {
 
   const [row] = await sql<ErrorRow[]>`
     insert into error_events (
-      id, code, family, message, path, ua, viewport, occurred_at, handle, user_id
+      id, code, family, message, path, ua, viewport, occurred_at, handle, user_id,
+      request_id, http_status, route
     )
     values (
       ${newId("err")},
@@ -117,7 +131,10 @@ errorRoutes.post("/", async (c) => {
       ${viewport},
       ${occurredAt},
       ${user?.handle ?? null},
-      ${user?.id ?? null}
+      ${user?.id ?? null},
+      ${requestId},
+      ${httpStatus},
+      ${route}
     )
     returning *
   `;
