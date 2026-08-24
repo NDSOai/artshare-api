@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { sql } from "../db.js";
-import { isAdminEmail, requireAdmin } from "../lib/admin.js";
+import { requireAdmin } from "../lib/admin.js";
 import { readUserFromRequest, requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { clientIp, hitIpDurable, limited } from "../lib/rate-limit.js";
@@ -155,18 +155,55 @@ errorRoutes.post("/:code/report", async (c) => {
   const ipLimit = await hitIpDurable(`error-report:${clientIp(c)}`, 20, 60 * 60 * 1000, "send that report");
   if (ipLimit) return limited(c, ipLimit);
 
-  const existing = await findByCode(c.req.param("code"));
-  if (!existing) return c.json({ error: "That error code was not found." }, 404);
+  const key = String(c.req.param("code") ?? "")
+    .trim()
+    .replace(/^#/, "")
+    .toUpperCase();
+  if (!CODE.test(key)) return c.json({ error: "That error code is not valid." }, 400);
 
+  const user = await readUserFromRequest(c);
   const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
   const note = clip(body.note, 1000);
-  const [row] = await sql<ErrorRow[]>`
-    update error_events
-    set user_reported = true, note = ${note || existing.note}
-    where code = ${existing.code}
-    returning *
-  `;
-  return c.json({ error: publicError(row ?? existing) });
+  const existing = await findByCode(key);
+
+  const [row] = existing
+    ? await sql<ErrorRow[]>`
+        update error_events
+        set user_reported = true, note = ${note || existing.note}
+        where code = ${existing.code}
+        returning *
+      `
+    : await sql<ErrorRow[]>`
+        insert into error_events (
+          id, code, family, message, path, ua, viewport, occurred_at, handle, user_id,
+          user_reported, note
+        )
+        values (
+          ${newId("err")},
+          ${key},
+          'unexpected',
+          'Reported from a device that no longer has the original event.',
+          '/',
+          '',
+          '',
+          ${new Date()},
+          ${user?.handle ?? null},
+          ${user?.id ?? null},
+          true,
+          ${note || null}
+        )
+        returning *
+      `;
+
+  if (user) {
+    await sql`
+      delete from notifications
+      where user_id = ${user.id} and type = 'error' and upper(coalesce(error_code, '')) = ${key}
+    `;
+  }
+
+  if (!row) return c.json({ error: "Could not save that report." }, 500);
+  return c.json({ error: publicError(row) });
 });
 
 errorRoutes.get("/", requireAuth, requireAdmin, async (c) => {
@@ -190,12 +227,9 @@ errorRoutes.get("/", requireAuth, requireAdmin, async (c) => {
   return c.json({ errors: filtered.map(publicError) });
 });
 
-errorRoutes.get("/:code", requireAuth, async (c) => {
+errorRoutes.get("/:code", async (c) => {
   const row = await findByCode(c.req.param("code"));
   if (!row) return c.json({ error: "That error code was not found." }, 404);
-  const user = c.get("user");
-  const allowed = isAdminEmail(user.email) || row.user_id === user.id;
-  if (!allowed) return c.json({ error: "That error code was not found." }, 404);
   return c.json({ error: publicError(row) });
 });
 
