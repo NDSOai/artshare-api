@@ -26,9 +26,10 @@ notificationRoutes.get("/", async (c) => {
       from_handle: string | null;
       from_photo: string | null;
       work_id: string | null;
+      error_code: string | null;
     }[]
   >`
-    select n.id, n.type, n.text, n.read, n.created_at, n.work_id,
+    select n.id, n.type, n.text, n.read, n.created_at, n.work_id, n.error_code,
            u.name as from_name, u.handle as from_handle, u.photo_url as from_photo
     from notifications n
     left join users u on u.id = n.from_id
@@ -41,11 +42,12 @@ notificationRoutes.get("/", async (c) => {
     notifications: rows.map((row) => ({
       id: row.id,
       type: row.type,
-      from: row.from_name ?? "Someone",
+      from: row.type === "error" ? "Whootaloo" : (row.from_name ?? "Someone"),
       fromHandle: row.from_handle ?? "",
       fromPhoto: publicMediaUrl(row.from_photo),
       text: row.text,
       workId: row.work_id,
+      errorCode: row.error_code || undefined,
       time: row.created_at.toISOString(),
       read: row.read,
     })),

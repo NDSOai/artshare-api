@@ -59,6 +59,11 @@ Matches `lib/api.ts` on the frontend.
 | GET/POST/DELETE | `/follows/:handle` |
 | GET | `/messages` |
 | GET/POST | `/messages/:handle` |
+| POST | `/errors` |
+| POST | `/errors/:code/report` |
+| GET | `/errors` |
+| GET | `/errors/:code` |
+| PATCH | `/errors/:code` |
 
 Signup does not return a session. Confirm email first. Chat requires a mutual follow.
 

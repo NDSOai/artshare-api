@@ -204,3 +204,30 @@ create index if not exists collection_works_work_idx on collection_works (work_i
 create index if not exists follows_followee_idx on follows (followee_id, created_at desc);
 create index if not exists reposts_work_idx on reposts (work_id);
 create index if not exists reposts_user_created_idx on reposts (user_id, created_at desc);
+
+create table if not exists error_events (
+  id text primary key,
+  code text not null unique,
+  family text not null,
+  message text not null,
+  path text not null default '/',
+  ua text not null default '',
+  viewport text not null default '',
+  occurred_at timestamptz not null default now(),
+  handle text,
+  user_id text references users(id) on delete set null,
+  online boolean not null default true,
+  user_reported boolean not null default false,
+  note text,
+  status text not null default 'open',
+  count integer not null default 1,
+  created_at timestamptz not null default now(),
+  check (family in ('auth', 'publish', 'network', 'media', 'unexpected')),
+  check (status in ('open', 'triaged', 'resolved'))
+);
+
+create index if not exists error_events_occurred_idx on error_events (occurred_at desc);
+create index if not exists error_events_status_idx on error_events (status, occurred_at desc);
+create index if not exists error_events_user_idx on error_events (user_id, occurred_at desc);
+
+alter table notifications add column if not exists error_code text;

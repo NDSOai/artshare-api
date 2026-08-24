@@ -5,18 +5,20 @@ export async function notify(input: {
   userId: string;
   fromId?: string | null;
   workId?: string | null;
-  type: "like" | "comment" | "follow" | "repost" | "message" | "collect";
+  errorCode?: string | null;
+  type: "like" | "comment" | "follow" | "repost" | "message" | "collect" | "error";
   text: string;
 }) {
   if (input.fromId && input.fromId === input.userId) return;
   await sql`
-    insert into notifications (id, user_id, type, from_id, work_id, text)
+    insert into notifications (id, user_id, type, from_id, work_id, error_code, text)
     values (
       ${newId("n")},
       ${input.userId},
       ${input.type},
       ${input.fromId ?? null},
       ${input.workId ?? null},
+      ${input.errorCode ?? null},
       ${input.text}
     )
   `;

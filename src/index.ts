@@ -15,6 +15,7 @@ import { workRoutes } from "./routes/works.js";
 import { collectionRoutes } from "./routes/collections.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { adminRoutes } from "./routes/admin.js";
+import { errorRoutes } from "./routes/errors.js";
 import { backfillFavoriteCollections } from "./lib/collections.js";
 import { initMessageCrypto } from "./lib/crypto-message.js";
 import { backfillInvitePacks } from "./lib/invites.js";
@@ -75,6 +76,7 @@ app.route("/follows", followRoutes);
 app.route("/messages", messageRoutes);
 app.route("/collections", collectionRoutes);
 app.route("/notifications", notificationRoutes);
+app.route("/errors", errorRoutes);
 
 app.notFound((c) => c.json({ error: "Not found." }, 404));
 

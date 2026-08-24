@@ -19,3 +19,11 @@ export const requireModerator: MiddlewareHandler<{ Variables: Authed }> = async 
   }
   await next();
 };
+
+export const requireAdmin: MiddlewareHandler<{ Variables: Authed }> = async (c, next) => {
+  const user = c.get("user");
+  if (!isAdminEmail(user.email)) {
+    return c.json({ error: "That tool is only for superadmins." }, 403);
+  }
+  await next();
+};
