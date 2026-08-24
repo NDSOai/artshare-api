@@ -97,6 +97,17 @@ create table if not exists messages (
 create index if not exists messages_pair_idx
   on messages (least(sender_id, recipient_id), greatest(sender_id, recipient_id), created_at);
 
+create table if not exists message_reactions (
+  message_id text not null references messages(id) on delete cascade,
+  user_id text not null references users(id) on delete cascade,
+  kind text not null,
+  created_at timestamptz not null default now(),
+  primary key (message_id, user_id),
+  check (kind in ('see', 'hand', 'cheer', 'sadface', 'exclaim', 'spiral', 'tree', 'being'))
+);
+
+create index if not exists message_reactions_message_idx on message_reactions (message_id);
+
 create table if not exists likes (
   user_id text not null references users(id) on delete cascade,
   work_id text not null references works(id) on delete cascade,

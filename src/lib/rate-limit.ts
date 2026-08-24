@@ -103,6 +103,24 @@ export async function messagesLastHour(userId: string) {
   return row?.n ?? 0;
 }
 
+export async function lastReactionAt(userId: string) {
+  const [row] = await sql<{ created_at: Date }[]>`
+    select created_at from message_reactions
+    where user_id = ${userId}
+    order by created_at desc
+    limit 1
+  `;
+  return row?.created_at ?? null;
+}
+
+export async function reactionsLastHour(userId: string) {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from message_reactions
+    where user_id = ${userId} and created_at > now() - interval '1 hour'
+  `;
+  return row?.n ?? 0;
+}
+
 export async function followsLastHour(userId: string) {
   const [row] = await sql<{ n: number }[]>`
     select count(*)::int as n from follows
