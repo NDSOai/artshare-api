@@ -15,6 +15,12 @@ notificationRoutes.use("*", requireAuth);
 
 notificationRoutes.get("/", async (c) => {
   const me = c.get("user");
+  await sql`
+    delete from notifications
+    where user_id = ${me.id}
+      and type = 'error'
+      and created_at < now() - interval '24 hours'
+  `;
   const rows = await sql<
     {
       id: string;
@@ -36,15 +42,19 @@ notificationRoutes.get("/", async (c) => {
     where n.user_id = ${me.id}
       and not (
         n.type = 'error'
-        and exists (
-          select 1 from error_events e
-          where e.code = replace(upper(coalesce(n.error_code, '')), '#', '')
-            and (
-              e.user_reported
-              or e.family = 'network'
-              or e.http_status is null
-              or e.http_status in (502, 503, 504)
-            )
+        and (
+          n.created_at < now() - interval '24 hours'
+          or exists (
+            select 1 from error_events e
+            where e.code = replace(upper(coalesce(n.error_code, '')), '#', '')
+              and (
+                e.user_reported
+                or e.occurred_at < now() - interval '24 hours'
+                or e.family = 'network'
+                or e.http_status is null
+                or e.http_status in (502, 503, 504)
+              )
+          )
         )
       )
     order by n.created_at desc
