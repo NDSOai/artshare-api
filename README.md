@@ -21,8 +21,8 @@ Needs Postgres. Railway can provide `DATABASE_URL`.
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres |
 | `JWT_SECRET` | yes | Session tokens |
-| `MESSAGE_SECRET` | yes | Chat encryption at rest. Keep in Railway env. Do not store in the database. |
-| `MESSAGE_SECRET_PREV` | no | Comma-separated old secrets, only if you rotate |
+| `MESSAGE_SECRET` | yes | Chat encryption at rest. Keep in Railway env. Set once; do not regenerate. |
+| `MESSAGE_SECRET_PREV` | no | Comma-separated old secrets, only if you rotate on purpose |
 | `FRONTEND_URL` | yes in prod | Confirm / reset links, CORS |
 | `RESEND_API_KEY` | for mail | Without it, links log to stdout in local only |
 | `RESEND_FROM` | no | Defaults to Resend onboarding sender |
@@ -68,7 +68,7 @@ Matches `lib/api.ts` on the frontend.
 
 Signup does not return a session. Confirm email first. Chat requires a mutual follow.
 
-Messages use AES-256-GCM on the server with `MESSAGE_SECRET` from the environment. This is encryption at rest, not end-to-end. An older key may still sit in Postgres `app_kv` so existing threads can be read and rewritten onto the env secret.
+Messages use AES-256-GCM on the server with `MESSAGE_SECRET` from the environment. This is encryption at rest, not end-to-end. A leftover secret may still sit in Postgres `app_kv` so older threads can be read; we never write a new secret there. Optional `MESSAGE_SECRET_PREV` covers an intentional rotation. On boot, readable rows are rewritten onto the current env secret. Never delete a chat row because it cannot be decrypted.
 
 ## Point Railway at this repo
 

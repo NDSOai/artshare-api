@@ -1,7 +1,7 @@
 import { sql } from "../db.js";
 import { decryptBody, encryptBody, needsRekey } from "./crypto-message.js";
 
-/** Rewrite rows encrypted with an old secret onto MESSAGE_SECRET. Never delete. */
+/** Rewrite rows encrypted with an older secret onto MESSAGE_SECRET. Never delete or blank a body. */
 export async function rekeyMessages() {
   const rows = await sql<{ id: string; body_enc: string }[]>`select id, body_enc from messages`;
   let rekeyed = 0;
@@ -13,7 +13,9 @@ export async function rekeyMessages() {
       continue;
     }
     if (!needsRekey(row.body_enc, text)) continue;
-    await sql`update messages set body_enc = ${encryptBody(text)} where id = ${row.id}`;
+    const next = encryptBody(text);
+    if (decryptBody(next) !== text) continue;
+    await sql`update messages set body_enc = ${next} where id = ${row.id}`;
     rekeyed += 1;
   }
   console.log(`[messages] ${rows.length} stored, ${rekeyed} rekeyed, ${unreadable} still unreadable`);

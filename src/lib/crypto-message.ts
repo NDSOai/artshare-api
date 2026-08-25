@@ -9,6 +9,10 @@ function asKey(secret: string) {
   return createHash("sha256").update(secret).digest();
 }
 
+function fingerprint(secret: string) {
+  return createHash("sha256").update(secret).digest("hex");
+}
+
 function uniqueSecrets(values: string[]) {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -21,19 +25,49 @@ function uniqueSecrets(values: string[]) {
   return out;
 }
 
+function asPayload(payload: unknown) {
+  if (typeof payload === "string") return payload.trim();
+  if (Buffer.isBuffer(payload)) return payload.toString("utf8").trim();
+  return "";
+}
+
+/**
+ * New writes use MESSAGE_SECRET from the environment.
+ * A leftover Postgres secret is read-only, so old threads still open if env changed.
+ * We never write that leftover secret, and we never blank a body we could not decrypt.
+ */
 export async function initMessageCrypto() {
   extras.length = 0;
-  primary = asKey(env.messageSecret);
-  const [row] = await sql<{ value: string }[]>`
+  const current = env.messageSecret.trim();
+  if (!current) throw new Error("Missing MESSAGE_SECRET");
+  primary = asKey(current);
+
+  const [legacy] = await sql<{ value: string }[]>`
     select value from app_kv where key = 'message_secret' limit 1
   `;
+  const [fpRow] = await sql<{ value: string }[]>`
+    select value from app_kv where key = 'message_secret_fp' limit 1
+  `;
+
   for (const secret of uniqueSecrets([
-    row?.value ?? "",
+    legacy?.value ?? "",
     ...(process.env.MESSAGE_SECRET_PREV || "").split(","),
   ])) {
-    if (secret === env.messageSecret) continue;
+    if (secret === current) continue;
     extras.push(asKey(secret));
   }
+
+  const fp = fingerprint(current);
+  if (fpRow?.value && fpRow.value !== fp) {
+    console.warn(
+      `[messages] MESSAGE_SECRET changed; keeping ${extras.length} older key${extras.length === 1 ? "" : "s"} for reads`,
+    );
+  }
+  await sql`
+    insert into app_kv (key, value) values ('message_secret_fp', ${fp})
+    on conflict (key) do update set value = excluded.value
+  `;
+
   console.log(`[messages] crypto from env (${1 + extras.length} key${1 + extras.length === 1 ? "" : "s"})`);
 }
 
@@ -43,8 +77,8 @@ function requirePrimary() {
 }
 
 function openPayload(payload: string, key: Buffer) {
-  const buf = Buffer.from(payload || "", "base64");
-  if (buf.length < 29) return "";
+  const buf = Buffer.from(payload, "base64");
+  if (buf.length < 29) throw new Error("short");
   const iv = buf.subarray(0, 12);
   const tag = buf.subarray(12, 28);
   const encrypted = buf.subarray(28);
@@ -57,7 +91,7 @@ function decryptWith(payload: string, key: Buffer) {
   try {
     return openPayload(payload, key);
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -69,17 +103,20 @@ export function encryptBody(text: string) {
   return Buffer.concat([iv, tag, encrypted]).toString("base64");
 }
 
-export function decryptBody(payload: string) {
-  if (!payload) return "";
+export function decryptBody(payload: unknown) {
+  const raw = asPayload(payload);
+  if (!raw) return "";
   const keys = primary ? [primary, ...extras] : extras;
   for (const key of keys) {
-    const text = decryptWith(payload, key);
-    if (text) return text;
+    const text = decryptWith(raw, key);
+    if (text !== null) return text;
   }
   return "";
 }
 
-export function needsRekey(payload: string, text: string) {
+export function needsRekey(payload: unknown, text: string) {
   if (!text || !primary) return false;
-  return decryptWith(payload, primary) !== text;
+  const raw = asPayload(payload);
+  if (!raw) return false;
+  return decryptWith(raw, primary) !== text;
 }
