@@ -247,3 +247,40 @@ alter table error_events add column if not exists route text;
 create index if not exists error_events_request_idx on error_events (request_id);
 
 alter table notifications add column if not exists error_code text;
+
+alter table users add column if not exists private_account boolean not null default false;
+alter table works add column if not exists mature boolean not null default false;
+alter table works add column if not exists topic_id text;
+
+create table if not exists topics (
+  id text primary key,
+  slug text not null unique,
+  label text not null,
+  created_at timestamptz not null default now(),
+  check (slug ~ '^[a-z0-9][a-z0-9-]{0,62}$')
+);
+
+create table if not exists topic_aliases (
+  slug text primary key,
+  topic_id text not null references topics(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  check (slug ~ '^[a-z0-9][a-z0-9-]{0,62}$')
+);
+
+create index if not exists topic_aliases_topic_idx on topic_aliases (topic_id);
+
+do $$ begin
+  alter table works
+    add constraint works_topic_id_fkey
+    foreign key (topic_id) references topics(id) on delete set null;
+exception
+  when duplicate_object then null;
+end $$;
+
+create index if not exists works_topic_created_idx on works (topic_id, created_at desc);
+create index if not exists works_mature_created_idx on works (created_at desc) where mature = false;
+
+create extension if not exists pg_trgm;
+create index if not exists works_title_trgm on works using gin (title gin_trgm_ops);
+create index if not exists works_medium_trgm on works using gin (medium gin_trgm_ops);
+create index if not exists works_tools_trgm on works using gin ((tools::text) gin_trgm_ops);

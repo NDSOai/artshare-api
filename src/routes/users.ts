@@ -7,6 +7,7 @@ import { isStorageReady, ownMediaKey, parseDataUrl, publicMediaUrl, putAvatarFil
 import { displayInviteCode, unusedInviteCodes } from "../lib/invites.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
 import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
+import { galleryOpenTo, wantsHideMature, workVisibleSql } from "../lib/visibility.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
@@ -186,6 +187,7 @@ userRoutes.patch("/me", requireAuth, async (c) => {
       favoriteHandles?: string[];
       pinnedWorkIds?: string[];
       socialLinks?: { id?: string; url?: string }[];
+      privateAccount?: boolean;
     }>();
 
     const name = (body.name?.trim() || current.name).slice(0, 80);
@@ -203,6 +205,8 @@ userRoutes.patch("/me", requireAuth, async (c) => {
     const stripeColor = /^#[0-9a-fA-F]{6}$/.test(incomingStripe)
       ? incomingStripe.toUpperCase()
       : current.stripe_color || "#3A4A32";
+    const privateAccount =
+      body.privateAccount !== undefined ? Boolean(body.privateAccount) : Boolean(current.private_account);
 
     const [user] = await sql<UserRow[]>`
       update users set
@@ -215,7 +219,8 @@ userRoutes.patch("/me", requireAuth, async (c) => {
         mediums = ${sql.json(mediums)},
         favorite_handles = ${sql.json(favoriteHandles)},
         pinned_work_ids = ${sql.json(pinnedWorkIds)},
-        social_links = ${sql.json(socialLinks)}
+        social_links = ${sql.json(socialLinks)},
+        private_account = ${privateAccount}
       where id = ${current.id}
       returning *
     `;
@@ -241,12 +246,17 @@ userRoutes.get("/me/invites", requireAuth, async (c) => {
 
 userRoutes.get("/me/cheers", requireAuth, async (c) => {
   const me = c.get("user");
+  const hideMature = wantsHideMature(c, me);
+  const visible = workVisibleSql(me.id, hideMature);
   const works = await sql<WorkRow[]>`
-    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
+    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+           u.private_account as artist_private, t.slug as topic_slug
     from likes l
     join works w on w.id = l.work_id
     join users u on u.id = w.artist_id
+    left join topics t on t.id = w.topic_id
     where l.user_id = ${me.id}
+      and ${visible}
     order by l.created_at desc
     limit 80
   `;
@@ -369,24 +379,37 @@ userRoutes.get("/:handle", requireCatalog, async (c) => {
   if (!user.email_verified_at && viewer?.id !== user.id) {
     return c.json({ error: "Artist not found." }, 404);
   }
-  const works = await sql<WorkRow[]>`
-    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
-    from works w
-    join users u on u.id = w.artist_id
-    where w.artist_id = ${user.id}
-    order by w.created_at desc
-  `;
-  const reposts = await sql<(WorkRow & { reposted_by: string; reposted_by_name: string; repost_caption: string })[]>`
-    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
-           ${user.handle} as reposted_by, ${user.name} as reposted_by_name, r.caption as repost_caption
-    from reposts r
-    join works w on w.id = r.work_id
-    join users u on u.id = w.artist_id
-    where r.user_id = ${user.id}
-    order by r.created_at desc
-  `;
   const me = viewer;
   const showAbout = Boolean(me && (me.id === user.id || (await isFollowing(me.id, user.id))));
+  const hideMature = wantsHideMature(c, me);
+  const galleryOpen = await galleryOpenTo(me?.id ?? null, user.id, Boolean(user.private_account));
+  const visible = workVisibleSql(me?.id ?? null, hideMature);
+  const works = galleryOpen
+    ? await sql<WorkRow[]>`
+        select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+               u.private_account as artist_private, t.slug as topic_slug
+        from works w
+        join users u on u.id = w.artist_id
+        left join topics t on t.id = w.topic_id
+        where w.artist_id = ${user.id}
+          and ${visible}
+        order by w.created_at desc
+      `
+    : [];
+  const reposts = galleryOpen
+    ? await sql<(WorkRow & { reposted_by: string; reposted_by_name: string; repost_caption: string })[]>`
+        select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+               u.private_account as artist_private, t.slug as topic_slug,
+               ${user.handle} as reposted_by, ${user.name} as reposted_by_name, r.caption as repost_caption
+        from reposts r
+        join works w on w.id = r.work_id
+        join users u on u.id = w.artist_id
+        left join topics t on t.id = w.topic_id
+        where r.user_id = ${user.id}
+          and ${visible}
+        order by r.created_at desc
+      `
+    : [];
   cacheNone(c);
   return c.json({
     user: showAbout && me?.id === user.id ? publicUser(user) : undefined,

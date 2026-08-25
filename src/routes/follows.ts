@@ -4,6 +4,7 @@ import { requireAuth, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { followsLastHour, limited } from "../lib/rate-limit.js";
 import { publicMediaUrl } from "../lib/storage.js";
+import { resolveTopic, topicSlug } from "../lib/topics.js";
 
 export const followRoutes = new Hono<{ Variables: Authed }>();
 
@@ -88,18 +89,26 @@ followRoutes.get("/hometree", requireAuth, async (c) => {
 });
 
 function asTopicSlug(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .slice(0, 63);
+  return topicSlug(value);
+}
+
+async function canonicalTopicSlug(value: string) {
+  const slug = asTopicSlug(value);
+  if (!slug) return "";
+  const topic = await resolveTopic(slug);
+  return topic?.slug ?? slug;
 }
 
 followRoutes.put("/topics", requireAuth, async (c) => {
   const me = c.get("user");
   const body = await c.req.json<{ topics?: string[] }>().catch(() => ({ topics: [] as string[] }));
-  const wanted = [...new Set((Array.isArray(body.topics) ? body.topics : []).map(asTopicSlug).filter(Boolean))];
+  const wanted = [
+    ...new Set(
+      await Promise.all(
+        (Array.isArray(body.topics) ? body.topics : []).map((item) => canonicalTopicSlug(String(item))),
+      ),
+    ),
+  ].filter(Boolean);
   await sql.begin(async (tx) => {
     await tx`delete from topic_follows where user_id = ${me.id}`;
     for (const slug of wanted) {
@@ -111,7 +120,7 @@ followRoutes.put("/topics", requireAuth, async (c) => {
 
 followRoutes.post("/topics/:slug", requireAuth, async (c) => {
   const me = c.get("user");
-  const slug = asTopicSlug(c.req.param("slug"));
+  const slug = await canonicalTopicSlug(c.req.param("slug"));
   if (!slug) return c.json({ error: "That topic could not be followed." }, 400);
   await sql`
     insert into topic_follows (user_id, slug)
@@ -124,10 +133,12 @@ followRoutes.post("/topics/:slug", requireAuth, async (c) => {
 followRoutes.delete("/topics/:slug", requireAuth, async (c) => {
   const me = c.get("user");
   const slug = asTopicSlug(c.req.param("slug"));
-  if (slug) {
-    await sql`delete from topic_follows where user_id = ${me.id} and slug = ${slug}`;
+  const canonical = slug ? await canonicalTopicSlug(slug) : "";
+  const slugs = [...new Set([slug, canonical].filter(Boolean))];
+  if (slugs.length) {
+    await sql`delete from topic_follows where user_id = ${me.id} and slug in ${sql(slugs)}`;
   }
-  return c.json({ following: false, slug });
+  return c.json({ following: false, slug: canonical || slug });
 });
 
 followRoutes.get("/:handle", requireAuth, async (c) => {

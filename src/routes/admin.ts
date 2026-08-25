@@ -5,6 +5,17 @@ import { requireAuth, type Authed } from "../lib/auth-mw.js";
 
 export const adminRoutes = new Hono<{ Variables: Authed }>();
 
+adminRoutes.patch("/works/:id", requireAuth, requireModerator, async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ mature?: boolean }>().catch(() => ({ mature: undefined as boolean | undefined }));
+  if (typeof body.mature !== "boolean") return c.json({ error: "Mark mature on or off." }, 400);
+  const [work] = await sql<{ id: string; mature: boolean }[]>`
+    update works set mature = ${body.mature} where id = ${id} returning id, mature
+  `;
+  if (!work) return c.json({ error: "Work not found." }, 404);
+  return c.json({ id: work.id, mature: work.mature });
+});
+
 adminRoutes.delete("/works/:id", requireAuth, requireModerator, async (c) => {
   const id = c.req.param("id");
   const [work] = await sql<{ id: string }[]>`delete from works where id = ${id} returning id`;

@@ -22,6 +22,7 @@ import { backfillInvitePacks } from "./lib/invites.js";
 import { rekeyMessages } from "./lib/message-purge.js";
 import { robotsTxt } from "./lib/ai-crawlers.js";
 import { mintRequestId } from "./lib/request-id.js";
+import { backfillTopics } from "./lib/topics.js";
 
 const app = new Hono();
 
@@ -114,6 +115,7 @@ app.route("/errors", errorRoutes);
 app.notFound((c) => c.json({ error: "Not found." }, 404));
 
 await migrate();
+await backfillTopics();
 await initMessageCrypto();
 
 serve({ fetch: app.fetch, port: env.port, overrideGlobalObjects: true }, (info) => {

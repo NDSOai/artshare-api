@@ -37,6 +37,7 @@ export type UserRow = {
   social_links?: { id: string; url: string }[];
   moderation_on?: boolean;
   token_version?: number;
+  private_account?: boolean;
   created_at: Date;
 };
 
@@ -60,10 +61,15 @@ export type WorkRow = {
   cover_url?: string | null;
   pages?: unknown;
   sequence_label?: string | null;
+  mature?: boolean;
+  topic_id?: string | null;
+  locked?: "private" | "mature" | null;
   created_at: Date;
   artist_name?: string;
   artist_handle?: string;
   artist_verified?: boolean;
+  artist_private?: boolean;
+  topic_slug?: string | null;
 };
 
 export function clampBannerPosition(value: unknown, fallback = 50) {
@@ -90,6 +96,7 @@ export function publicUser(user: UserRow) {
     socialLinks: publicSocials(user.social_links),
     adminEligible: isAdminEmail(user.email),
     moderationOn: isAdminEmail(user.email) && Boolean(user.moderation_on),
+    privateAccount: Boolean(user.private_account),
   };
 }
 
@@ -146,6 +153,7 @@ export function publicArtist(user: UserRow) {
     mediums: user.mediums ?? [],
     favoriteHandles: user.favorite_handles ?? [],
     pinnedWorkIds: user.pinned_work_ids ?? [],
+    privateAccount: Boolean(user.private_account),
   };
 }
 
@@ -162,7 +170,19 @@ type PublicWorkRow = WorkRow & {
   share_count?: number;
   collect_count?: number;
   repost_caption?: string | null;
+  locked?: "private" | "mature" | null;
 };
+
+function topicSlugFromMedium(medium: string) {
+  return medium
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 63);
+}
 
 function repairTools(tools: string[] | null | undefined) {
   if (!Array.isArray(tools)) return [];
@@ -210,6 +230,8 @@ function publicPages(raw: unknown) {
 
 export function publicWork(work: PublicWorkRow) {
   const pages = publicPages(work.pages);
+  const locked = work.locked || undefined;
+  const open = !locked;
   return {
     id: work.id,
     title: work.title,
@@ -218,21 +240,25 @@ export function publicWork(work: PublicWorkRow) {
     h: 400,
     color: work.color,
     medium: work.medium,
+    topicSlug: work.topic_slug || topicSlugFromMedium(work.medium) || undefined,
     humanVerified: Boolean(work.artist_verified),
     remixable: work.remixable,
+    mature: Boolean(work.mature),
+    artistPrivate: Boolean(work.artist_private),
+    locked,
     views: work.views,
     cheers: work.cheer_count ?? 0,
     skips: work.skips ?? 0,
     date: workDate(work.created_at),
-    tools: repairTools(work.tools),
-    description: work.description ?? undefined,
+    tools: open ? repairTools(work.tools) : [],
+    description: open ? work.description ?? undefined : undefined,
     downloadPermitted: work.download_permitted,
-    mediaUrl: publicMediaUrl(work.media_url),
-    coverUrl: publicMediaUrl(work.cover_url),
+    mediaUrl: open ? publicMediaUrl(work.media_url) : undefined,
+    coverUrl: open ? publicMediaUrl(work.cover_url) : undefined,
     kind: pages.length > 1 ? "sequence" : (work.kind ?? "image"),
     license: work.license ?? "All Rights Reserved",
-    body: work.body ?? undefined,
-    pages: pages.length ? pages : undefined,
+    body: open ? work.body ?? undefined : undefined,
+    pages: open && pages.length ? pages : undefined,
     sequenceLabel: work.sequence_label?.trim() || undefined,
     repostedBy: work.reposted_by || undefined,
     repostedByName: work.reposted_by_name || undefined,

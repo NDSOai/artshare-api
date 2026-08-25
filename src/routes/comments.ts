@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { sql } from "../db.js";
-import { requireAuth, requireCatalog, type Authed } from "../lib/auth-mw.js";
+import { readUserFromRequest, requireAuth, requireCatalog, type Authed } from "../lib/auth-mw.js";
 import { notify } from "../lib/notify.js";
 import { assertCooldown, commentsLastHour, lastCommentAt, limited } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
-import { cacheCatalog } from "../lib/http-cache.js";
+import { cacheNone } from "../lib/http-cache.js";
+import { wantsHideMature, workLockFor, galleryOpenTo } from "../lib/visibility.js";
 
 export const commentRoutes = new Hono<{ Variables: Authed }>();
 
@@ -45,6 +46,27 @@ function publicComment(row: {
 }
 
 commentRoutes.get("/:workId/comments", requireCatalog, async (c) => {
+  const viewer = await readUserFromRequest(c);
+  const hideMature = wantsHideMature(c, viewer);
+  const [host] = await sql<{ artist_id: string; mature: boolean; artist_private: boolean }[]>`
+    select w.artist_id, w.mature, u.private_account as artist_private
+    from works w
+    join users u on u.id = w.artist_id
+    where w.id = ${c.req.param("workId")}
+    limit 1
+  `;
+  if (!host) return c.json({ error: "Work not found." }, 404);
+  const lock = await workLockFor({
+    artistId: host.artist_id,
+    artistPrivate: Boolean(host.artist_private),
+    mature: Boolean(host.mature),
+    viewerId: viewer?.id ?? null,
+    hideMature,
+  });
+  if (lock) {
+    cacheNone(c);
+    return c.json({ comments: [] });
+  }
   const rows = await sql<
     {
       id: string;
@@ -64,7 +86,7 @@ commentRoutes.get("/:workId/comments", requireCatalog, async (c) => {
     where c.work_id = ${c.req.param("workId")}
     order by c.created_at asc
   `;
-  cacheCatalog(c, 30, 120);
+  cacheNone(c);
   return c.json({
     comments: rows.map(publicComment),
   });
@@ -73,10 +95,16 @@ commentRoutes.get("/:workId/comments", requireCatalog, async (c) => {
 commentRoutes.post("/:workId/comments", requireAuth, async (c) => {
   const user = c.get("user");
   const workId = c.req.param("workId");
-  const [work] = await sql<{ id: string; artist_id: string; title: string }[]>`
-    select id, artist_id, title from works where id = ${workId} limit 1
+  const [work] = await sql<{ id: string; artist_id: string; title: string; private_account: boolean }[]>`
+    select w.id, w.artist_id, w.title, u.private_account
+    from works w
+    join users u on u.id = w.artist_id
+    where w.id = ${workId}
+    limit 1
   `;
   if (!work) return c.json({ error: "Work not found." }, 404);
+  const open = await galleryOpenTo(user.id, work.artist_id, Boolean(work.private_account));
+  if (!open) return c.json({ error: "This gallery is private." }, 403);
   const body = await c.req.json<{
     text?: string;
     pinnedTo?: { x: number; y: number } | null;

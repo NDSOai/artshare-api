@@ -5,7 +5,8 @@ import { ensureFavorites, isFavoritesName } from "../lib/collections.js";
 import { notify } from "../lib/notify.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
-import { cacheCatalog } from "../lib/http-cache.js";
+import { cacheCatalog, cacheNone } from "../lib/http-cache.js";
+import { wantsHideMature, workVisibleSql } from "../lib/visibility.js";
 import {
   isStorageReady,
   ownMediaKey,
@@ -240,14 +241,20 @@ collectionRoutes.get("/:id", requireCatalog, async (c) => {
     limit 1
   `;
   if (!col) return c.json({ error: "Collection not found." }, 404);
+  const hideMature = wantsHideMature(c, me);
+  const visible = workVisibleSql(me?.id ?? null, hideMature);
   const works = await sql<WorkRow[]>`
-    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
+    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+           u.private_account as artist_private, t.slug as topic_slug
     from collection_works cw
     join works w on w.id = cw.work_id
     join users u on u.id = w.artist_id
+    left join topics t on t.id = w.topic_id
     where cw.collection_id = ${col.id}
+      and ${visible}
     order by cw.sort_order asc, cw.created_at desc
   `;
+  cacheNone(c);
   return c.json({
     collection: publicCollection(col, { mine: Boolean(me && me.id === col.owner_id) }),
     works: await publicWorks(works),

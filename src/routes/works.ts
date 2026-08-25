@@ -8,6 +8,8 @@ import { assertUpload, isStorageReady, ownMediaKey, putWorkFile, putWorkPageFile
 import { consumeCaptcha } from "../lib/captcha.js";
 import { newId } from "../lib/tokens.js";
 import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
+import { ensureTopic, topicSlug } from "../lib/topics.js";
+import { wantsHideMature, workLockFor, workVisibleSql } from "../lib/visibility.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
 
@@ -21,6 +23,109 @@ async function visitorOf(c: Context) {
   return `ip:${clientIp(c)}`;
 }
 
+const WORK_LIST_SELECT = sql`
+  w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+  u.private_account as artist_private, t.slug as topic_slug
+`;
+
+function kindFilterSql(kind: string) {
+  if (!kind || kind === "all") return sql`true`;
+  return sql`w.kind = ${kind}`;
+}
+
+function mediumFilterSql(medium: string) {
+  const raw = medium.trim();
+  if (!raw) return sql`true`;
+  const slug = topicSlug(raw);
+  const legacy = raw.toLowerCase().replace(/\s+/g, "-");
+  return sql`(
+    t.slug = ${slug}
+    or exists (
+      select 1 from topic_aliases a
+      where a.topic_id = w.topic_id and a.slug = ${slug}
+    )
+    or lower(regexp_replace(btrim(w.medium), E'\\s+', '-', 'g')) = ${legacy}
+  )`;
+}
+
+function searchFilterSql(q: string) {
+  const needle = q.trim();
+  if (!needle) return sql`true`;
+  const like = `%${needle}%`;
+  return sql`(
+    w.title ilike ${like}
+    or u.name ilike ${like}
+    or u.handle ilike ${like}
+    or w.medium ilike ${like}
+    or w.tools::text ilike ${like}
+    or coalesce(w.sequence_label, '') ilike ${like}
+  )`;
+}
+
+function followingFilterSql(userId: string) {
+  return sql`(
+    w.artist_id in (select followee_id from follows where follower_id = ${userId})
+    or exists (
+      select 1
+      from topic_follows tf
+      left join topic_aliases a on a.slug = tf.slug
+      left join topics tp on tp.slug = tf.slug
+      where tf.user_id = ${userId}
+        and w.topic_id is not null
+        and w.topic_id = coalesce(a.topic_id, tp.id)
+    )
+    or lower(regexp_replace(btrim(w.medium), E'\\s+', '-', 'g')) in (
+      select slug from topic_follows where user_id = ${userId}
+    )
+  )`;
+}
+
+function followedTopicBoostSql(userId: string | null) {
+  if (!userId) return sql`0`;
+  return sql`(
+    case when exists (
+      select 1
+      from topic_follows tf
+      left join topic_aliases a on a.slug = tf.slug
+      left join topics tp on tp.slug = tf.slug
+      where tf.user_id = ${userId}
+        and w.topic_id is not null
+        and w.topic_id = coalesce(a.topic_id, tp.id)
+    ) then 2.0 else 0 end
+  )`;
+}
+
+function parseCursor(raw: string) {
+  const value = raw.trim();
+  if (!value) return null;
+  const split = value.lastIndexOf("|");
+  if (split <= 0) return null;
+  const at = new Date(value.slice(0, split));
+  const id = value.slice(split + 1).trim();
+  if (!id || !Number.isFinite(at.getTime())) return null;
+  return { at: at.toISOString(), id };
+}
+
+function cursorSql(cursor: { at: string; id: string } | null) {
+  if (!cursor) return sql`true`;
+  return sql`(w.created_at, w.id) < (${cursor.at}::timestamptz, ${cursor.id})`;
+}
+
+function excludeSql(ids: string[]) {
+  if (!ids.length) return sql`true`;
+  return sql`w.id not in ${sql(ids)}`;
+}
+
+function parseExclude(raw: string) {
+  return [...new Set(raw.split(",").map((item) => item.trim()).filter(Boolean))].slice(0, 80);
+}
+
+function asBoolFlag(value: unknown) {
+  if (value === true || value === false) return value;
+  const raw = String(value ?? "").toLowerCase();
+  return raw === "true" || raw === "1";
+}
+
 workRoutes.get("/", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "works-list", 120);
   if (blocked) return blocked;
@@ -28,62 +133,110 @@ workRoutes.get("/", requireCatalog, async (c) => {
   const medium = (c.req.query("medium") || "").trim();
   const kind = (c.req.query("kind") || "").trim();
   const following = c.req.query("following") === "1";
-  const me = following ? await readUserFromRequest(c) : null;
-  if (following && !me) return c.json({ works: [] });
+  const wander = c.req.query("mode") === "wander";
+  const me = await readUserFromRequest(c);
+  if (following && !me) return c.json({ works: [], nextCursor: null });
 
-  const like = q ? `%${q}%` : null;
-  if (following && me) {
-    const originals = await sql<WorkRow[]>`
-      select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
+  const hideMature = wantsHideMature(c, me);
+  const visible = workVisibleSql(me?.id ?? null, hideMature);
+  const kindSql = kindFilterSql(kind);
+  const mediumSql = mediumFilterSql(medium);
+  const searchSql = searchFilterSql(q);
+  const exclude = parseExclude(c.req.query("exclude") || "");
+  const cursor = parseCursor(c.req.query("cursor") || "");
+  const pageSize = wander ? 24 : 40;
+
+  cacheNone(c);
+
+  if (wander) {
+    const boost = followedTopicBoostSql(me?.id ?? null);
+    const rows = await sql<WorkRow[]>`
+      select ${WORK_LIST_SELECT},
+        (
+          ${boost}
+          + ln(1 + coalesce((select count(*)::int from likes l where l.work_id = w.id), 0)) * 0.55
+          - ln(1 + coalesce(w.skips, 0)) * 0.75
+          + random() * 1.4
+          + exp(-extract(epoch from (now() - w.created_at)) / 86400.0 / 40.0) * 0.4
+        ) as wander_score
       from works w
       join users u on u.id = w.artist_id
-      where (
-          w.artist_id in (select followee_id from follows where follower_id = ${me.id})
-          or lower(regexp_replace(btrim(w.medium), E'\\s+', '-', 'g')) in (
-            select slug from topic_follows where user_id = ${me.id}
-          )
-        )
-        and (${medium} = '' or lower(replace(w.medium, ' ', '-')) = ${medium.toLowerCase()})
-        and (${kind} = '' or w.kind = ${kind})
-      order by w.created_at desc
-      limit 80
+      left join topics t on t.id = w.topic_id
+      where ${visible}
+        and ${kindSql}
+        and ${mediumSql}
+        and ${excludeSql(exclude)}
+      order by wander_score desc, w.created_at desc, w.id desc
+      limit ${pageSize}
     `;
-    const boosted = await sql<(WorkRow & { reposted_by: string; reposted_by_name: string; repost_caption: string })[]>`
-      select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+    return c.json({ works: await publicWorks(rows), nextCursor: rows.length === pageSize ? "more" : null });
+  }
+
+  if (following && me) {
+    const followSql = followingFilterSql(me.id);
+    const originals = await sql<WorkRow[]>`
+      select ${WORK_LIST_SELECT}
+      from works w
+      join users u on u.id = w.artist_id
+      left join topics t on t.id = w.topic_id
+      where ${followSql}
+        and ${visible}
+        and ${mediumSql}
+        and ${kindSql}
+        and ${cursorSql(cursor)}
+      order by w.created_at desc, w.id desc
+      limit ${pageSize + 1}
+    `;
+    const boosted =
+      cursor
+        ? []
+        : await sql<(WorkRow & { reposted_by: string; reposted_by_name: string; repost_caption: string })[]>`
+      select ${WORK_LIST_SELECT},
              ru.handle as reposted_by, ru.name as reposted_by_name, r.caption as repost_caption
       from reposts r
       join works w on w.id = r.work_id
       join users u on u.id = w.artist_id
       join users ru on ru.id = r.user_id
+      left join topics t on t.id = w.topic_id
       where r.user_id in (select followee_id from follows where follower_id = ${me.id})
         and w.artist_id <> r.user_id
-        and (${medium} = '' or lower(replace(w.medium, ' ', '-')) = ${medium.toLowerCase()})
-        and (${kind} = '' or w.kind = ${kind})
+        and ${visible}
+        and ${mediumSql}
+        and ${kindSql}
       order by r.created_at desc
-      limit 80
+      limit ${pageSize}
     `;
+    const overflow = originals.length > pageSize;
+    const originalPage = overflow ? originals.slice(0, pageSize) : originals;
     const seen = new Set<string>();
-    const works = [...boosted, ...originals].filter((work) => {
+    const page = [...boosted, ...originalPage].filter((work) => {
       if (seen.has(work.id)) return false;
       seen.add(work.id);
       return true;
     });
-    cacheNone(c);
-    return c.json({ works: await publicWorks(works) });
+    const last = originalPage[originalPage.length - 1];
+    const nextCursor = overflow && last ? `${new Date(last.created_at).toISOString()}|${last.id}` : null;
+    return c.json({ works: await publicWorks(page), nextCursor });
   }
 
   const works = await sql<WorkRow[]>`
-    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
+    select ${WORK_LIST_SELECT}
     from works w
     join users u on u.id = w.artist_id
-    where (${like}::text is null or w.title ilike ${like} or u.name ilike ${like} or u.handle ilike ${like} or w.medium ilike ${like})
-      and (${medium} = '' or lower(replace(w.medium, ' ', '-')) = ${medium.toLowerCase()})
-      and (${kind} = '' or w.kind = ${kind})
-    order by w.created_at desc
-    limit 100
+    left join topics t on t.id = w.topic_id
+    where ${searchSql}
+      and ${visible}
+      and ${mediumSql}
+      and ${kindSql}
+      and ${cursorSql(cursor)}
+    order by w.created_at desc, w.id desc
+    limit ${pageSize + 1}
   `;
-  cacheCatalog(c, 60, 300);
-  return c.json({ works: await publicWorks(works) });
+  const overflow = works.length > pageSize;
+  const page = overflow ? works.slice(0, pageSize) : works;
+  const last = page[page.length - 1];
+  const nextCursor = overflow && last ? `${new Date(last.created_at).toISOString()}|${last.id}` : null;
+  return c.json({ works: await publicWorks(page), nextCursor });
 });
 
 workRoutes.post("/:id/like", requireAuth, async (c) => {
@@ -223,6 +376,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
     let coverUrl = existing.cover_url ?? "";
     let pagesRaw: unknown = undefined;
     let sequenceLabelRaw: string | undefined;
+    let mature = Boolean(existing.mature);
     let file: FormFile | null = null;
     let cover: FormFile | null = null;
     let formFiles: Record<string, FormFile> = {};
@@ -234,6 +388,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
       if (form.fields.description !== undefined) description = String(form.fields.description);
       if (form.fields.color !== undefined) color = String(form.fields.color);
       if (form.fields.remixable !== undefined) remixable = String(form.fields.remixable) === "true";
+      if (form.fields.mature !== undefined) mature = asBoolFlag(form.fields.mature);
       if (form.fields.kind !== undefined) kind = String(form.fields.kind);
       if (form.fields.license !== undefined) license = String(form.fields.license);
       if (form.fields.body !== undefined) bodyText = String(form.fields.body);
@@ -256,12 +411,14 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
         tools?: string[];
         pages?: unknown;
         sequenceLabel?: string;
+        mature?: boolean;
       }>().catch(() => ({} as Record<string, never>));
       if (body.title !== undefined) title = String(body.title);
       if (body.medium !== undefined) medium = String(body.medium);
       if (body.description !== undefined) description = String(body.description);
       if (body.color !== undefined) color = String(body.color);
       if (body.remixable !== undefined) remixable = Boolean(body.remixable);
+      if (body.mature !== undefined) mature = Boolean(body.mature);
       if (body.kind !== undefined) kind = String(body.kind);
       if (body.license !== undefined) license = String(body.license);
       if (body.body !== undefined) bodyText = String(body.body);
@@ -363,6 +520,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
       else if (pagesRaw !== undefined) bodyText = first.body ?? "";
     }
 
+    const topic = await ensureTopic(medium);
     const [work] = await sql<WorkRow[]>`
       update works set
         title = ${title},
@@ -378,7 +536,9 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
         media_url = ${mediaUrl || null},
         cover_url = ${coverUrl || null},
         pages = ${sql.json(pages)},
-        sequence_label = ${sequenceLabel}
+        sequence_label = ${sequenceLabel},
+        mature = ${mature},
+        topic_id = ${topic?.id ?? null}
       where id = ${existing.id}
       returning *
     `;
@@ -413,14 +573,32 @@ workRoutes.delete("/:id", requireAuth, async (c) => {
 workRoutes.get("/:id", requireCatalog, async (c) => {
   const blocked = limitPublicGet(c, "works-get", 120);
   if (blocked) return blocked;
+  const viewer = await readUserFromRequest(c);
+  const hideMature = wantsHideMature(c, viewer);
   const [work] = await sql<WorkRow[]>`
-    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified
+    select w.*, u.name as artist_name, u.handle as artist_handle, u.verified as artist_verified,
+           u.private_account as artist_private, t.slug as topic_slug
     from works w
     join users u on u.id = w.artist_id
+    left join topics t on t.id = w.topic_id
     where w.id = ${c.req.param("id")}
     limit 1
   `;
   if (!work) return c.json({ error: "Work not found." }, 404);
+  const lock = await workLockFor({
+    artistId: work.artist_id,
+    artistPrivate: Boolean(work.artist_private),
+    mature: Boolean(work.mature),
+    viewerId: viewer?.id ?? null,
+    hideMature,
+  });
+  if (lock) {
+    cacheNone(c);
+    return c.json({
+      work: await asPublicWork({ ...work, locked: lock }),
+      shares: [],
+    });
+  }
   await sql`update works set views = views + 1 where id = ${work.id}`;
   await recordWorkSignal(work.id, "view", await visitorOf(c), false);
   const shares = await sql<{ handle: string; name: string; caption: string; created_at: Date }[]>`
@@ -437,7 +615,7 @@ workRoutes.get("/:id", requireCatalog, async (c) => {
   const [collects] = await sql<{ n: number }[]>`
     select count(*)::int as n from collection_works where work_id = ${work.id}
   `;
-  cacheCatalog(c, 120, 300);
+  cacheNone(c);
   return c.json({
     work: await asPublicWork({
       ...work,
@@ -726,6 +904,7 @@ workRoutes.post("/", requireAuth, async (c) => {
   let mediaUrl = "";
   let color = "#121612";
   let remixable = false;
+  let mature = false;
   let kind = "image";
   let license = "All Rights Reserved";
   let bodyText = "";
@@ -746,6 +925,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     mediaUrl = ownMediaKey(String(form.fields.mediaUrl || form.fields.url || "")) || "";
     color = String(form.fields.color || color);
     remixable = String(form.fields.remixable) === "true";
+    mature = asBoolFlag(form.fields.mature);
     kind = String(form.fields.kind || kind);
     license = String(form.fields.license || license);
     bodyText = String(form.fields.body || "");
@@ -765,6 +945,7 @@ workRoutes.post("/", requireAuth, async (c) => {
       mediaUrl?: string;
       color?: string;
       remixable?: boolean;
+      mature?: boolean;
       kind?: string;
       license?: string;
       body?: string;
@@ -780,6 +961,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     mediaUrl = ownMediaKey(body.mediaUrl || "") || "";
     color = body.color || color;
     remixable = Boolean(body.remixable);
+    mature = Boolean(body.mature);
     kind = body.kind || kind;
     license = body.license || license;
     bodyText = body.body || "";
@@ -875,16 +1057,19 @@ workRoutes.post("/", requireAuth, async (c) => {
 
   let work: WorkRow;
   try {
+    const topic = await ensureTopic(medium);
     const inserted = await sql<WorkRow[]>`
       insert into works (
         id, artist_id, title, medium, description, media_url, color, remixable,
-        download_permitted, tools, kind, license, body, cover_url, pages, sequence_label
+        download_permitted, tools, kind, license, body, cover_url, pages, sequence_label,
+        mature, topic_id
       )
       values (
         ${workId}, ${user.id}, ${title.trim()}, ${medium}, ${description || null},
         ${mediaUrl || null}, ${color}, ${remixable}, ${remixable},
         ${sql.json(tools)}, ${kind}, ${license}, ${bodyText || null},
-        ${coverUrl || null}, ${sql.json(pages)}, ${sequenceLabel}
+        ${coverUrl || null}, ${sql.json(pages)}, ${sequenceLabel},
+        ${mature}, ${topic?.id ?? null}
       )
       returning *
     `;
