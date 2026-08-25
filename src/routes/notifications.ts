@@ -34,6 +34,19 @@ notificationRoutes.get("/", async (c) => {
     from notifications n
     left join users u on u.id = n.from_id
     where n.user_id = ${me.id}
+      and not (
+        n.type = 'error'
+        and exists (
+          select 1 from error_events e
+          where e.code = replace(upper(coalesce(n.error_code, '')), '#', '')
+            and (
+              e.user_reported
+              or e.family = 'network'
+              or e.http_status is null
+              or e.http_status in (502, 503, 504)
+            )
+        )
+      )
     order by n.created_at desc
     limit 50
   `;

@@ -99,6 +99,7 @@ errorRoutes.post("/", async (c) => {
   const occurredRaw = typeof body.occurredAt === "string" ? Date.parse(body.occurredAt) : NaN;
   const occurredAt = Number.isFinite(occurredRaw) ? new Date(occurredRaw) : new Date();
 
+  const alert = body.alert !== false;
   const existing = await findByCode(code);
   if (existing) {
     const [row] = await sql<ErrorRow[]>`
@@ -139,7 +140,15 @@ errorRoutes.post("/", async (c) => {
     returning *
   `;
 
-  if (user) {
+  if (
+    user &&
+    alert &&
+    family !== "network" &&
+    httpStatus != null &&
+    httpStatus !== 502 &&
+    httpStatus !== 503 &&
+    httpStatus !== 504
+  ) {
     await notify({
       userId: user.id,
       type: "error",
@@ -198,7 +207,9 @@ errorRoutes.post("/:code/report", async (c) => {
   if (user) {
     await sql`
       delete from notifications
-      where user_id = ${user.id} and type = 'error' and upper(coalesce(error_code, '')) = ${key}
+      where user_id = ${user.id}
+        and type = 'error'
+        and replace(upper(coalesce(error_code, '')), '#', '') = ${key}
     `;
   }
 
