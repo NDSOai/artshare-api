@@ -10,6 +10,7 @@ import { newId } from "../lib/tokens.js";
 import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
 import { ensureTopic, topicSlug } from "../lib/topics.js";
 import { wantsHideMature, workLockFor, workVisibleSql } from "../lib/visibility.js";
+import { coverKeyFromPages, firstImageMediaKey } from "../lib/work-cover.js";
 
 export const workRoutes = new Hono<{ Variables: Authed }>();
 
@@ -377,6 +378,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
     let pagesRaw: unknown = undefined;
     let sequenceLabelRaw: string | undefined;
     let mature = Boolean(existing.mature);
+    let coverPageId = "";
     let file: FormFile | null = null;
     let cover: FormFile | null = null;
     let formFiles: Record<string, FormFile> = {};
@@ -395,6 +397,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
       if (form.fields.tools !== undefined) tools = asTools(form.fields.tools);
       if (form.fields.pages !== undefined) pagesRaw = form.fields.pages;
       if (form.fields.sequenceLabel !== undefined) sequenceLabelRaw = String(form.fields.sequenceLabel);
+      if (form.fields.coverPageId !== undefined) coverPageId = String(form.fields.coverPageId);
       file = asUpload(form.files.file);
       cover = asUpload(form.files.cover);
       formFiles = form.files;
@@ -412,6 +415,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
         pages?: unknown;
         sequenceLabel?: string;
         mature?: boolean;
+        coverPageId?: string;
       }>().catch(() => ({} as Record<string, never>));
       if (body.title !== undefined) title = String(body.title);
       if (body.medium !== undefined) medium = String(body.medium);
@@ -425,6 +429,7 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
       if (body.tools !== undefined) tools = asTools(body.tools);
       if (body.pages !== undefined) pagesRaw = body.pages;
       if (body.sequenceLabel !== undefined) sequenceLabelRaw = String(body.sequenceLabel);
+      if (body.coverPageId !== undefined) coverPageId = String(body.coverPageId);
     }
 
     title = clip(title, 120) || existing.title;
@@ -515,7 +520,12 @@ workRoutes.patch("/:id", requireAuth, async (c) => {
     if (pages.length) {
       const first = pages[0];
       mediaUrl = first.mediaUrl ?? "";
-      coverUrl = first.coverUrl ?? "";
+      if (coverPageId) {
+        const picked = coverKeyFromPages(pages, coverPageId);
+        if (picked) coverUrl = picked;
+      } else if (!coverUrl) {
+        coverUrl = firstImageMediaKey(pages) || first.coverUrl || coverUrl;
+      }
       if (first.kind === "text") bodyText = first.body ?? bodyText;
       else if (pagesRaw !== undefined) bodyText = first.body ?? "";
     }
@@ -914,6 +924,7 @@ workRoutes.post("/", requireAuth, async (c) => {
   let coverUrl = "";
   let pagesRaw: unknown = undefined;
   let sequenceLabelRaw = "";
+  let coverPageId = "";
   let formFiles: Record<string, FormFile> = {};
 
   const useForm = contentType.includes("multipart/form-data") || !contentType.includes("json");
@@ -934,6 +945,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     captchaAnswer = String(form.fields.captchaAnswer || "");
     pagesRaw = form.fields.pages;
     sequenceLabelRaw = String(form.fields.sequenceLabel || "");
+    coverPageId = String(form.fields.coverPageId || "");
     file = asUpload(form.files.file);
     cover = asUpload(form.files.cover);
     formFiles = form.files;
@@ -952,6 +964,7 @@ workRoutes.post("/", requireAuth, async (c) => {
       tools?: string[];
       pages?: unknown;
       sequenceLabel?: string;
+      coverPageId?: string;
       captchaToken?: string;
       captchaAnswer?: string;
     }>();
@@ -968,6 +981,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     tools = asTools(body.tools);
     pagesRaw = body.pages;
     sequenceLabelRaw = String(body.sequenceLabel || "");
+    coverPageId = String(body.coverPageId || "");
     captchaToken = body.captchaToken || "";
     captchaAnswer = body.captchaAnswer || "";
   }
@@ -1016,7 +1030,7 @@ workRoutes.post("/", requireAuth, async (c) => {
     pages = built.pages;
     const first = pages[0];
     mediaUrl = first?.mediaUrl ?? "";
-    coverUrl = first?.coverUrl ?? "";
+    coverUrl = coverKeyFromPages(pages, coverPageId) || first?.coverUrl || "";
     bodyText = first?.kind === "text" ? first.body ?? "" : first?.body ?? bodyText;
   } else {
     if (kind === "sequence") {

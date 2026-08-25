@@ -8,6 +8,7 @@ import { displayInviteCode, unusedInviteCodes } from "../lib/invites.js";
 import { limitPublicGet } from "../lib/rate-limit.js";
 import { cacheNone, cacheCatalog } from "../lib/http-cache.js";
 import { galleryOpenTo, wantsHideMature, workVisibleSql } from "../lib/visibility.js";
+import { workStillKey } from "../lib/work-cover.js";
 
 export const userRoutes = new Hono<{ Variables: Authed }>();
 
@@ -104,15 +105,20 @@ function asSocialLinks(value: unknown) {
   return out;
 }
 
-function workImageKey(work: { kind?: string | null; media_url?: string | null; cover_url?: string | null }) {
-  const kind = work.kind ?? "image";
-  if (kind === "music" || kind === "text") return work.cover_url || work.media_url || null;
-  return work.media_url || work.cover_url || null;
+function workImageKey(work: {
+  kind?: string | null;
+  media_url?: string | null;
+  cover_url?: string | null;
+  pages?: unknown;
+}) {
+  return workStillKey(work);
 }
 
 async function bannerFromWork(userId: string, workId: string) {
-  const [work] = await sql<{ kind: string | null; media_url: string | null; cover_url: string | null }[]>`
-    select kind, media_url, cover_url from works where id = ${workId} and artist_id = ${userId} limit 1
+  const [work] = await sql<
+    { kind: string | null; media_url: string | null; cover_url: string | null; pages: unknown }[]
+  >`
+    select kind, media_url, cover_url, pages from works where id = ${workId} and artist_id = ${userId} limit 1
   `;
   return work ? workImageKey(work) : null;
 }

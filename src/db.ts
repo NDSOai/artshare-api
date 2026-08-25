@@ -5,6 +5,7 @@ import postgres from "postgres";
 import { env } from "./env.js";
 import { isAdminEmail } from "./lib/admin.js";
 import { publicMediaUrl } from "./lib/storage.js";
+import { workStillKey } from "./lib/work-cover.js";
 
 export const sql = postgres(env.databaseUrl, { max: 8 });
 
@@ -254,7 +255,7 @@ export function publicWork(work: PublicWorkRow) {
     description: open ? work.description ?? undefined : undefined,
     downloadPermitted: work.download_permitted,
     mediaUrl: open ? publicMediaUrl(work.media_url) : undefined,
-    coverUrl: open ? publicMediaUrl(work.cover_url) : undefined,
+    coverUrl: open ? publicMediaUrl(workStillKey(work)) : undefined,
     kind: pages.length > 1 ? "sequence" : (work.kind ?? "image"),
     license: work.license ?? "All Rights Reserved",
     body: open ? work.body ?? undefined : undefined,

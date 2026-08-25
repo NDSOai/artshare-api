@@ -7,6 +7,7 @@ import { limitPublicGet } from "../lib/rate-limit.js";
 import { newId } from "../lib/tokens.js";
 import { cacheCatalog, cacheNone } from "../lib/http-cache.js";
 import { wantsHideMature, workVisibleSql } from "../lib/visibility.js";
+import { workStillKey } from "../lib/work-cover.js";
 import {
   isStorageReady,
   ownMediaKey,
@@ -51,10 +52,13 @@ function asTags(value: unknown): string[] {
   return tags;
 }
 
-function workImageKey(work: { kind?: string | null; media_url?: string | null; cover_url?: string | null }) {
-  const kind = work.kind ?? "image";
-  if (kind === "music" || kind === "text") return work.cover_url || work.media_url || null;
-  return work.media_url || work.cover_url || null;
+function workImageKey(work: {
+  kind?: string | null;
+  media_url?: string | null;
+  cover_url?: string | null;
+  pages?: unknown;
+}) {
+  return workStillKey(work);
 }
 
 function publicCollection(row: CollectionRow, extra: Record<string, unknown> = {}) {
@@ -77,8 +81,14 @@ function publicCollection(row: CollectionRow, extra: Record<string, unknown> = {
 
 async function coverFromWork(workId: string | null, collectionId: string, ownerId?: string) {
   if (!workId) return { coverUrl: null as string | null, coverWorkId: null as string | null };
-  const [inCollection] = await sql<{ id: string; kind: string | null; media_url: string | null; cover_url: string | null }[]>`
-    select w.id, w.kind, w.media_url, w.cover_url
+  const [inCollection] = await sql<{
+    id: string;
+    kind: string | null;
+    media_url: string | null;
+    cover_url: string | null;
+    pages: unknown;
+  }[]>`
+    select w.id, w.kind, w.media_url, w.cover_url, w.pages
     from works w
     join collection_works cw on cw.work_id = w.id
     where w.id = ${workId} and cw.collection_id = ${collectionId}
@@ -86,8 +96,14 @@ async function coverFromWork(workId: string | null, collectionId: string, ownerI
   `;
   if (inCollection) return { coverUrl: workImageKey(inCollection), coverWorkId: inCollection.id };
   if (!ownerId) return { coverUrl: null as string | null, coverWorkId: null as string | null };
-  const [owned] = await sql<{ id: string; kind: string | null; media_url: string | null; cover_url: string | null }[]>`
-    select id, kind, media_url, cover_url
+  const [owned] = await sql<{
+    id: string;
+    kind: string | null;
+    media_url: string | null;
+    cover_url: string | null;
+    pages: unknown;
+  }[]>`
+    select id, kind, media_url, cover_url, pages
     from works
     where id = ${workId} and artist_id = ${ownerId}
     limit 1
