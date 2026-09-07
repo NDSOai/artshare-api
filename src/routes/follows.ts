@@ -73,8 +73,8 @@ followRoutes.get("/hometree", requireAuth, async (c) => {
       u.verified,
       (select max(w.created_at) from works w where w.artist_id = u.id) as last_posted_at
     from follows f
-    join users u on u.id = f.follower_id
-    where f.followee_id = ${me.id}
+    join users u on u.id = f.followee_id
+    where f.follower_id = ${me.id}
     order by last_posted_at desc nulls last, lower(u.handle) asc
   `;
   return c.json({

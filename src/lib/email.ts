@@ -101,6 +101,12 @@ export async function sendInviteCodesEmail(email: string, name: string, codes: s
   const resend = client();
   const who = name.trim() || "there";
   const list = codes.map((code) => escapeHtml(code)).join("<br />");
+  const one = codes.length === 1;
+  const heading = one ? "Your invite" : `Your ${codes.length} invites`;
+  const subject = one ? "Your Whootaloo invite" : `Your ${codes.length} Whootaloo invites`;
+  const body = one
+    ? `${escapeHtml(who)}, Whootaloo is invite-only for now. This code lets one person create an account.`
+    : `${escapeHtml(who)}, Whootaloo is invite-only for now. Each code lets one person create an account.`;
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -120,12 +126,12 @@ export async function sendInviteCodesEmail(email: string, name: string, codes: s
           </tr>
           <tr>
             <td style="padding:20px 28px 0;font-family:${display};font-size:22px;font-weight:600;line-height:1.3;color:#1A1E1A;">
-              Your 7 invites
+              ${heading}
             </td>
           </tr>
           <tr>
             <td style="padding:12px 28px 0;font-family:${sans};font-size:15px;line-height:1.55;color:#5A625A;">
-              ${escapeHtml(who)}, Whootaloo is invite-only for now. Each code lets one person create an account.
+              ${body}
             </td>
           </tr>
           <tr>
@@ -135,7 +141,7 @@ export async function sendInviteCodesEmail(email: string, name: string, codes: s
           </tr>
           <tr>
             <td style="padding:22px 28px 28px;font-family:${sans};font-size:13px;line-height:1.5;color:#7A827A;">
-              You can also copy unused codes from Edit profile. A used code will not work again.
+              You can also copy unused codes from User Settings. A used code will not work again.
             </td>
           </tr>
         </table>
@@ -155,7 +161,7 @@ export async function sendInviteCodesEmail(email: string, name: string, codes: s
   await resend.emails.send({
     from: env.resendFrom,
     to: email,
-    subject: "Your 7 Whootaloo invites",
+    subject,
     html,
   });
   console.log(`[email] invites sent to ${email}`);

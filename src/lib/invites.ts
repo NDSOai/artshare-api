@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { sql, type UserRow } from "../db.js";
 import { sendInviteCodesEmail } from "./email.js";
 
-export const INVITE_PACK = 7;
+export const INVITE_PACK = 1;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export function normalizeInviteCode(raw: string) {

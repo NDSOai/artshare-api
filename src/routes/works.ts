@@ -65,7 +65,8 @@ function searchFilterSql(q: string) {
 
 function followingFilterSql(userId: string) {
   return sql`(
-    w.artist_id in (select followee_id from follows where follower_id = ${userId})
+    w.artist_id = ${userId}
+    or w.artist_id in (select followee_id from follows where follower_id = ${userId})
     or exists (
       select 1
       from topic_follows tf
