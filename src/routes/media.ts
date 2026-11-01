@@ -61,7 +61,14 @@ async function serveMedia(c: Context) {
 
     const stream = obj.Body.transformToWebStream();
     return new Response(stream, { status: partial ? 206 : 200, headers });
-  } catch {
+  } catch (err) {
+    console.error("[media.read]", {
+      requestId: c.get("requestId"),
+      method,
+      key,
+      name: err instanceof Error ? err.name : "UnknownError",
+      message: err instanceof Error ? err.message : "Unknown media read failure",
+    });
     return c.json({ error: "Work not found." }, 404);
   }
 }

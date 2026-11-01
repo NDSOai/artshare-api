@@ -68,6 +68,11 @@ Matches `lib/api.ts` on the frontend.
 
 Signup does not return a session. Confirm email first. Chat requires a mutual follow.
 
+Media read failures log as `[media.read]` with the request ID, method, object key,
+and error name/message. Check the API's Railway deployment logs when media returns
+404; that response can also indicate a storage or serving error, not just a missing file.
+Credentials and raw SDK request/response objects are not logged.
+
 Messages use AES-256-GCM on the server with `MESSAGE_SECRET` from the environment. This is encryption at rest, not end-to-end. A leftover secret may still sit in Postgres `app_kv` so older threads can be read; we never write a new secret there. Optional `MESSAGE_SECRET_PREV` covers an intentional rotation. On boot, readable rows are rewritten onto the current env secret. Never delete a chat row because it cannot be decrypted.
 
 ## Point Railway at this repo
